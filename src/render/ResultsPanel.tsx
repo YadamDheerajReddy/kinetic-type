@@ -19,9 +19,11 @@ function StatTile({ value, label, valueClassName }: StatTileProps) {
 export function ResultsPanel({
   summary,
   onTypeAgain,
+  onSwitchDomain,
 }: {
   summary: SessionSummary
   onTypeAgain: () => void
+  onSwitchDomain: () => void
 }) {
   return (
     <div className="flex flex-col gap-6 rounded border border-hairline bg-panel p-6">
@@ -46,8 +48,8 @@ export function ResultsPanel({
         <div className="flex flex-col gap-2">
           <h3 className="font-display text-h2 text-cream">Slowest transitions this session</h3>
           <p className="text-body text-faint">
-            Real per-pair diagnosis (the heatmap, trends over time) arrives in Phase 3 — for now,
-            here's what this session found.
+            These are the pairs the adaptive engine will start weaving back into your next sessions
+            to drill — the "Targeted pair" stat during typing shows it happening live.
           </p>
           <ul className="flex flex-wrap gap-2">
             {summary.top_pairs.map((pair) => (
@@ -60,13 +62,22 @@ export function ResultsPanel({
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={onTypeAgain}
-        className="kt-mono self-start rounded bg-signal-teal px-4 py-2 text-body font-medium text-ink transition-colors duration-160 ease-kt-in-out hover:opacity-90"
-      >
-        Type again
-      </button>
+      <div className="flex gap-3">
+        <button
+          type="button"
+          onClick={onTypeAgain}
+          className="kt-mono rounded bg-signal-teal px-4 py-2 text-body font-medium text-ink transition-colors duration-160 ease-kt-in-out hover:opacity-90"
+        >
+          Type again
+        </button>
+        <button
+          type="button"
+          onClick={onSwitchDomain}
+          className="kt-mono rounded border border-hairline px-4 py-2 text-body font-medium text-cream transition-colors duration-160 ease-kt-in-out hover:border-signal-teal"
+        >
+          Switch domain
+        </button>
+      </div>
     </div>
   )
 }

@@ -9,11 +9,12 @@ Implementation Plan this build follows phase by phase.
 
 ## Status
 
-**Phase 1 — Engine Foundation** (Implementation Plan §03). A real, honest Prose-mode typing test:
-high-precision keystroke capture, a virtualized canvas renderer with word-wrapped text, live
-WPM/accuracy/burst-consistency, and a working n-gram latency matrix persisted to IndexedDB. No
-adaptivity yet — the text stream doesn't react to your weak pairs (that's Phase 2), and there's
-no Dev/CLI mode, heatmap, or account sync yet either.
+**Phase 2 — Adaptive Engine & Domains** (Implementation Plan §04) — the core "kinetic" mechanic is
+live. All three domain modes exist (Dev, CLI, Prose), and practice text is generated live by the
+Dynamic Material Synthesizer: it weights your key-pairs by `W(P) = L(P) × (1 + α·E(P))`, weaves
+words containing your slowest/most error-prone pairs into ~70% of the stream, and reinserts
+recently-mastered pairs at low density via a spaced-repetition queue to confirm retention. No
+heatmap or account sync yet (Phase 3/4).
 
 ## Stack
 
@@ -23,7 +24,7 @@ no Dev/CLI mode, heatmap, or account sync yet either.
 | Typing surface     | Custom Canvas 2D renderer (no native inputs)                          |
 | Background compute | Web Worker via [Comlink](https://github.com/GoogleChromeLabs/comlink) |
 | Local persistence  | IndexedDB via [Dexie](https://dexie.org/), inside the worker          |
-| State              | Zustand — installed, not wired in yet (Phase 1 state is local/refs)   |
+| State              | Zustand — installed, not wired in yet (state is still local/refs)     |
 | Styling            | Tailwind CSS, tokens from the UI/UX Brief                             |
 | Cloud sync         | Firebase — Auth, Firestore, Cloud Functions _(Phase 4)_               |
 | Hosting            | Vercel (Git-integrated preview/production deploys)                    |
@@ -38,10 +39,12 @@ npm install
 npm run dev
 ```
 
-Opens at `http://localhost:5173`. Press **Start session** and type — Prose-mode text streams in,
-each keystroke is timestamped and color-coded (teal = correct, amber = miss, blue block = cursor),
-live WPM/accuracy/elapsed update above the stage, and pressing **Esc** (or finishing the passage)
-ends the session and shows your slowest key-pair transitions.
+Opens at `http://localhost:5173`. Pick a domain card and type — text streams in and is generated
+live by the adaptive engine, each keystroke is timestamped and color-coded (teal = correct, amber
+= miss, blue block = cursor), live WPM/accuracy/elapsed/targeted-pair update above the stage, and
+pressing **Esc** (or finishing the passage) ends the session and shows your slowest key-pair
+transitions. Play a few sessions in the same domain and watch the "Targeted pair" stat start
+reflecting your actual weak spots — that's the adaptive loop working.
 
 ## Scripts
 
@@ -61,19 +64,20 @@ ends the session and shows your slowest key-pair transitions.
 
 ```
 src/
-  app/       Root shell (App.tsx) — idle / active / complete session states
-  domains/   Domain lexers (prose.ts is the only one so far; Dev/CLI are Phase 2)
-  data/      Dexie schema (ngram_stats, session_logs) — used from inside the worker
-  engine/    Adaptive Engine worker, session orchestration, n-gram matrix, metrics
-  render/    Canvas typing stage, results panel, small UI motifs (keycap chips)
+  app/       Root shell (App.tsx) — idle(domain select) / active / complete states
+  domains/   Domain lexers — dev.ts, cli.ts, prose.ts, each a flat word list
+  data/      Dexie schema (ngram_stats, session_logs, srs_queue) — used inside the worker
+  engine/    Worker, session orchestration, n-gram matrix, weighting (W(P)),
+             synthesizer (adaptive text generation), spaced-repetition queue, metrics
+  render/    Canvas typing stage, domain select, results panel, small UI motifs
   lib/       Firebase client init (not called from app code yet — Phase 4)
   test/      Vitest setup
 e2e/         Playwright end-to-end specs
 docs/        The six source documents this build follows
 ```
 
-Phase 2 adds the Dev and CLI lexers, the W(P) weighting formula and Dynamic Material
-Synthesizer (adaptive text selection), and the spaced-repetition queue.
+Phase 3 adds the keyboard-shaped latency heatmap, micro-pause/fatigue detection, history &
+trend charts, and the full motion/accessibility pass.
 
 ## Firebase
 

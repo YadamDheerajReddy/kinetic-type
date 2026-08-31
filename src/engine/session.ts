@@ -1,6 +1,9 @@
+import { DOMAIN_LEXERS } from '../domains'
 import { db } from '../data/db'
 import { computeTopPairs, initialMatrixState, processKeyEventBatch } from './ngramMatrix'
-import type { Domain, KeyEvent, PairStat, SessionSummary } from './types'
+import { reconcileSrsEntry, selectDuePairs } from './srs'
+import { synthesizeText } from './synthesizer'
+import type { Domain, KeyEvent, PairStat, SessionSummary, SrsEntry } from './types'
 
 /**
  * Session orchestration — runs inside the Adaptive Engine worker (worker.ts just
@@ -8,15 +11,23 @@ import type { Domain, KeyEvent, PairStat, SessionSummary } from './types'
  * is currently active; a dedicated worker only ever runs one session at a time,
  * so a singleton is the right shape here, not a class needing instantiation.
  */
+let activeDomain: Domain = 'PROSE'
 let matrixState = initialMatrixState
 let statsCache = new Map<string, PairStat>()
+let srsCache = new Map<string, SrsEntry>()
 let sessionLatencies: Array<{ pairId: string; ms: number }> = []
 
 export async function startSession(domain: Domain): Promise<void> {
+  activeDomain = domain
   matrixState = initialMatrixState
   sessionLatencies = []
-  const rows = await db.ngram_stats.where('domain').equals(domain).toArray()
-  statsCache = new Map(rows.map((row) => [row.pair_id, row]))
+
+  const [statRows, srsRows] = await Promise.all([
+    db.ngram_stats.where('domain').equals(domain).toArray(),
+    db.srs_queue.where('domain').equals(domain).toArray(),
+  ])
+  statsCache = new Map(statRows.map((row) => [row.pair_id, row]))
+  srsCache = new Map(srsRows.map((row) => [row.pair_id, row]))
 }
 
 /**
@@ -29,18 +40,75 @@ export function resetPairing(): void {
   matrixState = initialMatrixState
 }
 
+function domainAverageWeight(): number {
+  if (statsCache.size === 0) return 0
+  let sum = 0
+  for (const stat of statsCache.values()) sum += stat.weight_wp
+  return sum / statsCache.size
+}
+
 export async function processBatch(events: KeyEvent[]): Promise<void> {
   const result = processKeyEventBatch(events, matrixState, statsCache)
   matrixState = result.state
-  for (const stat of result.updatedStats) statsCache.set(stat.pair_id, stat)
+
+  const now = Date.now()
+  const avgWeight = domainAverageWeight()
+  const srsUpserts: SrsEntry[] = []
+  const srsRemovals: string[] = []
+
+  for (const stat of result.updatedStats) {
+    statsCache.set(stat.pair_id, stat)
+
+    const existingSrs = srsCache.get(stat.pair_id)
+    const reconciled = reconcileSrsEntry(stat, existingSrs, avgWeight, now)
+    if (reconciled) {
+      srsCache.set(stat.pair_id, reconciled)
+      srsUpserts.push(reconciled)
+    } else if (existingSrs) {
+      srsCache.delete(stat.pair_id)
+      srsRemovals.push(stat.pair_id)
+    }
+  }
+
   sessionLatencies.push(...result.sessionLatencies)
 
-  // Per TRD's engineering constraint, this write is off the typing-critical path —
-  // it happens after the batch has already been folded into in-memory state, and
-  // the caller doesn't await UI feedback on it.
-  if (result.updatedStats.length > 0) {
-    await db.ngram_stats.bulkPut(result.updatedStats)
-  }
+  // Off the typing-critical path: state is already updated in memory above,
+  // and the caller doesn't await UI feedback on these writes landing.
+  const writes: Promise<unknown>[] = []
+  if (result.updatedStats.length > 0) writes.push(db.ngram_stats.bulkPut(result.updatedStats))
+  if (srsUpserts.length > 0) writes.push(db.srs_queue.bulkPut(srsUpserts))
+  for (const pairId of srsRemovals) writes.push(db.srs_queue.delete([pairId, activeDomain]))
+  if (writes.length > 0) await Promise.all(writes)
+}
+
+export interface NextChunk {
+  text: string
+  targetedPair: string | null
+}
+
+/**
+ * TRD §04 Text Selection Protocol, run live against the current in-memory
+ * matrix — not once at session start, but every time the main thread's buffer
+ * runs low (< 40 chars, TRD §04 Worker Execution Budget), so a pair fumbled
+ * mid-session re-enters the stream within seconds.
+ */
+export async function getNextChunk(minChars: number): Promise<NextChunk> {
+  const lexer = DOMAIN_LEXERS[activeDomain]
+  const now = Date.now()
+  const dueSrsPairIds = selectDuePairs([...srsCache.values()], now).map((entry) => entry.pair_id)
+
+  const topPair = [...statsCache.values()]
+    .filter((pair) => pair.weight_wp > 0)
+    .sort((a, b) => b.weight_wp - a.weight_wp)[0]
+
+  const text = synthesizeText({
+    words: lexer.words,
+    weightedPairs: [...statsCache.values()],
+    dueSrsPairIds,
+    targetLength: minChars,
+  })
+
+  return { text, targetedPair: topPair?.pair_id ?? null }
 }
 
 export async function endSession(

@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto' // must precede the db import — patches globalThis.indexedDB
 import { beforeEach, describe, expect, it } from 'vitest'
 import { db } from '../data/db'
-import { endSession, processBatch, startSession } from './session'
+import { endSession, getNextChunk, processBatch, startSession } from './session'
 import type { KeyEvent } from './types'
 
 function key(char: string, type: 'down' | 'up', t: number, correct?: boolean): KeyEvent {
@@ -11,6 +11,7 @@ function key(char: string, type: 'down' | 'up', t: number, correct?: boolean): K
 beforeEach(async () => {
   await db.ngram_stats.clear()
   await db.session_logs.clear()
+  await db.srs_queue.clear()
 })
 
 describe('session orchestration', () => {
@@ -71,5 +72,50 @@ describe('session orchestration', () => {
     const persisted = await db.session_logs.get('test-session-1')
     expect(persisted).toMatchObject({ wpm_net: 38, accuracy: 97 })
     expect(persisted?.top_pairs[0]).toEqual({ pair: 'a->b', ms: 200 })
+  })
+
+  it('getNextChunk falls back to plain flow text before any pairs are weighted', async () => {
+    await startSession('PROSE')
+    const { text, targetedPair } = await getNextChunk(100)
+
+    expect(text.length).toBeGreaterThanOrEqual(100)
+    expect(targetedPair).toBeNull()
+  })
+
+  it('getNextChunk reports the current top-weighted pair once one exists', async () => {
+    await startSession('PROSE')
+    // repeatedly transit a->b slowly and with errors so it becomes clearly weighted
+    for (let i = 0; i < 5; i++) {
+      const base = i * 1000
+      await processBatch([
+        key('a', 'up', base, true),
+        key('b', 'down', base + 300, false), // slow (300ms) and wrong
+      ])
+    }
+
+    const { targetedPair } = await getNextChunk(100)
+    expect(targetedPair).toBe('a->b')
+  })
+
+  it('promotes a pair to srs_queue once it is mastered, persisted to IndexedDB', async () => {
+    await startSession('PROSE')
+    // one slow/erroring pair establishes a high domain average...
+    await processBatch([key('x', 'up', 0, false), key('y', 'down', 500, false)])
+    // ...then a different pair typed consistently fast and correctly should master out
+    // once it clears the MASTERY_OCCURRENCE_FLOOR (5 occurrences) — stop right there so
+    // the entry is freshly created at stage 0, not yet advanced by a later repeat.
+    for (let i = 1; i <= 5; i++) {
+      const base = i * 1000
+      await processBatch([key('a', 'up', base, true), key('b', 'down', base + 10, true)])
+    }
+
+    const entry = await db.srs_queue.get(['a->b', 'PROSE'])
+    expect(entry).toBeDefined()
+    expect(entry?.review_stage).toBe(0)
+
+    // one more successful encounter (the natural next repeat) should advance the stage
+    await processBatch([key('a', 'up', 6000, true), key('b', 'down', 6010, true)])
+    const advanced = await db.srs_queue.get(['a->b', 'PROSE'])
+    expect(advanced?.review_stage).toBe(1)
   })
 })

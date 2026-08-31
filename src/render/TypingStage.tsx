@@ -1,22 +1,25 @@
 import * as Comlink from 'comlink'
 import { useEffect, useRef, useState } from 'react'
-import { proseLexer } from '../domains/prose'
-import type { AdaptiveEngineApi } from '../engine/worker'
+import { ALL_DOMAINS, DOMAIN_LEXERS } from '../domains'
 import {
   computeAccuracy,
   computeBurstConsistency,
   computeNetWpm,
   computeRawWpm,
 } from '../engine/metrics'
-import type { KeyEvent, SessionSummary } from '../engine/types'
+import type { AdaptiveEngineApi } from '../engine/worker'
+import type { Domain, KeyEvent, SessionSummary } from '../engine/types'
 import { lineIndexForPosition, wrapText, type WrappedLine } from './wrapText'
 
-// Fixed-length session for Phase 1 (Implementation Plan §03) — user-selectable
-// session length (time or char-count) is FR-13, P2, deferred past Phase 1.
-const SESSION_TARGET_CHARS = 300
+// Fixed-length session for Phase 1/2 (Implementation Plan §03) — user-selectable
+// session length (time or char-count) is FR-13, P2, deferred.
+const SESSION_TARGET_CHARS = 400
 // TRD §03: batch flushed to the worker every 50ms or 32 events, whichever first.
 const BATCH_MAX_EVENTS = 32
 const BATCH_INTERVAL_MS = 50
+// TRD §04 Worker Execution Budget: "Next-chunk synthesis: When buffer < 40 chars remaining."
+const BUFFER_LOW_THRESHOLD = 40
+const CHUNK_FETCH_CHARS = 200
 
 const FONT = '16px "JetBrains Mono", ui-monospace, Consolas, monospace'
 const LINE_HEIGHT = 24
@@ -32,10 +35,11 @@ const COLOR_BLUE = '#6D8BFF'
 
 interface TypingStageProps {
   api: React.RefObject<Comlink.Remote<AdaptiveEngineApi> | null>
+  domain: Domain
   onComplete: (summary: SessionSummary) => void
 }
 
-export function TypingStage({ api, onComplete }: TypingStageProps) {
+export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   const targetTextRef = useRef('')
@@ -52,8 +56,10 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
   const totalPausedMsRef = useRef(0)
   const pausedAtRef = useRef<number | null>(null)
   const endedRef = useRef(false)
+  const fetchingChunkRef = useRef(false)
 
   const [liveStats, setLiveStats] = useState({ wpmNet: 0, accuracy: 100, elapsedSec: 0 })
+  const [targetedPair, setTargetedPair] = useState<string | null>(null)
 
   function elapsedMsAt(now: number): number {
     if (sessionStartRef.current === null) return 0
@@ -69,6 +75,24 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
     void api.current?.processBatch(batch)
   }
 
+  async function topUpBufferIfNeeded() {
+    if (fetchingChunkRef.current || endedRef.current) return
+    const remaining = targetTextRef.current.length - positionRef.current
+    const remainingToCap = SESSION_TARGET_CHARS - targetTextRef.current.length
+    if (remaining >= BUFFER_LOW_THRESHOLD || remainingToCap <= 0) return
+
+    fetchingChunkRef.current = true
+    const result = await api.current?.getNextChunk(Math.min(CHUNK_FETCH_CHARS, remainingToCap + 40))
+    if (result && !endedRef.current) {
+      targetTextRef.current = targetTextRef.current
+        ? `${targetTextRef.current} ${result.text}`
+        : result.text
+      linesRef.current = [] // force the canvas paint loop to re-wrap on next frame
+      setTargetedPair(result.targetedPair)
+    }
+    fetchingChunkRef.current = false
+  }
+
   async function finishSession() {
     if (endedRef.current) return
     endedRef.current = true
@@ -80,7 +104,7 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
 
     const summary = await api.current?.endSession({
       session_id: crypto.randomUUID(),
-      domain_type: 'PROSE',
+      domain_type: domain,
       wpm_raw: computeRawWpm(typedCountRef.current, elapsed),
       wpm_net: computeNetWpm(typedCountRef.current, errors, elapsed),
       accuracy: computeAccuracy(correctCountRef.current, typedCountRef.current),
@@ -94,13 +118,13 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
     if (summary) onComplete(summary)
   }
 
-  // Session setup: generate the passage, start the worker session, wire up
+  // Session setup: start the worker session, fetch the first chunk, wire up
   // input capture, batching, and the render loop. Runs once per mount — App.tsx
-  // remounts this component fresh for each "Type Again".
+  // remounts this component fresh for each "Type Again" / domain change.
   useEffect(() => {
     endedRef.current = false
-    const randomStart = Math.floor(Math.random() * 5000)
-    targetTextRef.current = proseLexer.nextChunk(randomStart, SESSION_TARGET_CHARS).text
+    targetTextRef.current = ''
+    linesRef.current = []
     positionRef.current = 0
     correctFlagsRef.current = []
     typedCountRef.current = 0
@@ -110,8 +134,12 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
     totalPausedMsRef.current = 0
     pausedAtRef.current = null
     sessionStartRef.current = null
+    setTargetedPair(null)
 
-    void api.current?.startSession('PROSE')
+    void (async () => {
+      await api.current?.startSession(domain)
+      await topUpBufferIfNeeded()
+    })()
 
     function onKeyDown(e: KeyboardEvent) {
       if (endedRef.current) return
@@ -142,13 +170,15 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
         char: e.key,
         type: 'down',
         t,
-        domain: 'PROSE',
+        domain,
         correct,
       })
       if (pendingEventsRef.current.length >= BATCH_MAX_EVENTS) flush()
 
-      if (positionRef.current >= targetTextRef.current.length) {
+      if (positionRef.current >= SESSION_TARGET_CHARS) {
         void finishSession()
+      } else {
+        void topUpBufferIfNeeded()
       }
     }
 
@@ -159,7 +189,7 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
         char: e.key,
         type: 'up',
         t: performance.now(),
-        domain: 'PROSE',
+        domain,
       })
       if (pendingEventsRef.current.length >= BATCH_MAX_EVENTS) flush()
     }
@@ -210,7 +240,7 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
         ctx.font = FONT
         ctx.textBaseline = 'top'
 
-        if (linesRef.current.length === 0 && width > 0) {
+        if (linesRef.current.length === 0 && width > 0 && targetTextRef.current.length > 0) {
           const charWidth = ctx.measureText('0').width
           const charsPerLine = Math.max(10, Math.floor((width - PADDING * 2) / charWidth))
           linesRef.current = wrapText(targetTextRef.current, charsPerLine)
@@ -267,20 +297,36 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
       linesRef.current = []
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- session setup runs once per mount by design
-  }, [])
+  }, [domain])
+
+  const activeLexer = DOMAIN_LEXERS[domain]
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
-        <span className="kt-mono inline-flex items-center gap-1.5 rounded-full bg-signal-teal px-3 py-1 text-body font-medium text-ink">
-          {proseLexer.glyph} {proseLexer.label.toUpperCase()}
-        </span>
+        {ALL_DOMAINS.map((lexer) => (
+          <span
+            key={lexer.id}
+            className={`kt-mono inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-body font-medium ${
+              lexer.id === activeLexer.id
+                ? 'bg-signal-teal text-ink'
+                : 'border border-hairline text-faint'
+            }`}
+          >
+            {lexer.glyph} {lexer.label.toUpperCase()}
+          </span>
+        ))}
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatTile value={liveStats.wpmNet.toFixed(0)} label="WPM Net" valueClassName="text-cream" />
         <StatTile value={`${liveStats.accuracy.toFixed(1)}%`} label="Accuracy" />
         <StatTile value={formatElapsed(liveStats.elapsedSec)} label="Elapsed" />
+        <StatTile
+          value={targetedPair ? targetedPair.replace('->', '→') : '—'}
+          label="Targeted pair"
+          valueClassName="text-friction-amber"
+        />
       </div>
 
       <canvas

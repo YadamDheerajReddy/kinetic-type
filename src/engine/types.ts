@@ -14,8 +14,8 @@ export interface KeyEvent {
   correct?: boolean
 }
 
-// Mirrors Backend Schema §02 TABLE: NGRAM_STATS, minus weight_wp which stays 0 until
-// Phase 2's W(P) formula (TRD §04) exists to compute it.
+// Mirrors Backend Schema §02 TABLE: NGRAM_STATS. weight_wp is real starting Phase 2
+// (TRD §04's W(P) formula, computed in ngramMatrix.ts on every update).
 export interface PairStat {
   pair_id: string
   domain: Domain
@@ -44,4 +44,16 @@ export interface SessionSummary {
   burst_consistency: number
   top_pairs: TopPair[]
   timestamp: number // Unix epoch ms, session completion time
+}
+
+// Mirrors Backend Schema §02 TABLE: SRS_QUEUE, plus `domain` — the schema doc's field
+// table doesn't list it, but srs_queue is described as an FK into ngram_stats, which
+// is itself keyed by [pair_id+domain], so an entry can't be resolved without it. Same
+// reasoning as `accuracy` on SessionSummary above.
+export interface SrsEntry {
+  pair_id: string
+  domain: Domain
+  mastered_at: number
+  next_review_at: number
+  review_stage: number // 0-5, Backend Schema §02
 }

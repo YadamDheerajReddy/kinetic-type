@@ -1,4 +1,5 @@
 import type { Domain, KeyEvent, PairStat, TopPair } from './types'
+import { computeWeight } from './weighting'
 
 const EWMA_LAMBDA = 0.15 // TRD §03: smoothing factor for avg_latency_ms
 
@@ -30,14 +31,20 @@ function updatePairStat(
   const avg = existing
     ? EWMA_LAMBDA * transitMs + (1 - EWMA_LAMBDA) * existing.avg_latency_ms
     : transitMs
+  const totalOccurrences = (existing?.total_occurrences ?? 0) + 1
+  const errorCount = (existing?.error_count ?? 0) + (isError ? 1 : 0)
 
   return {
     pair_id: pairId,
     domain,
     avg_latency_ms: avg,
-    total_occurrences: (existing?.total_occurrences ?? 0) + 1,
-    error_count: (existing?.error_count ?? 0) + (isError ? 1 : 0),
-    weight_wp: existing?.weight_wp ?? 0, // Phase 2 (TRD §04) computes this
+    total_occurrences: totalOccurrences,
+    error_count: errorCount,
+    weight_wp: computeWeight({
+      avg_latency_ms: avg,
+      error_count: errorCount,
+      total_occurrences: totalOccurrences,
+    }),
     last_updated: now,
   }
 }
