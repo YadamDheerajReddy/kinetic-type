@@ -5,7 +5,6 @@ const TARGET_WORD_RATIO = 0.7
 // TRD §04 step 4: spaced-repetition gate re-inserts recently-mastered pairs at low density.
 const REVIEW_INSERTION_CHANCE = 0.08
 const TOP_PAIR_COUNT = 8
-const WORD_GAP = 1 // one space between words, for length accounting
 
 export interface SynthesizeInput {
   words: readonly string[]
@@ -61,8 +60,13 @@ export function synthesizeText(input: SynthesizeInput): string {
     }
 
     const word = pool[Math.floor(random() * pool.length)]
+    // Mirrors join(' ') exactly: a separator precedes every word except the
+    // first, so `length` always matches what the final joined string will
+    // measure — otherwise the loop can stop one word early's-worth of gap
+    // short of targetLength (an off-by-one that only surfaces intermittently,
+    // whenever the accumulator happens to land exactly on the boundary).
+    length += (chosen.length > 0 ? 1 : 0) + word.length
     chosen.push(word)
-    length += word.length + WORD_GAP
   }
 
   return chosen.join(' ')
