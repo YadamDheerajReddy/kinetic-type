@@ -1,0 +1,64 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Design tokens — Kinetic Type UI/UX Brief §03 (Color System) & §04 (Typography System).
+  Dark is the only theme implemented in Phase 0; Focus Mode (light) is scoped to Phase 3.
+*/
+:root {
+  --kt-ink: #0b0f19;
+  --kt-panel: #141824;
+  --kt-signal-teal: #4fd1c5;
+  --kt-structure-blue: #6d8bff;
+  --kt-friction-amber: #ff8a5c;
+  --kt-engine-violet: #c792ea;
+  --kt-cream: #e9ecf5;
+  --kt-faint: #8a91a6;
+  --kt-hairline: #262c3d;
+
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--kt-ink);
+  color: var(--kt-cream);
+  font-family: 'Poppins', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+/* Every number, timestamp, and key-pair label is monospace — UI/UX Brief §04 */
+.kt-mono {
+  font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Focus ring — never suppressed, UI/UX Brief §11 */
+:focus-visible {
+  outline: 2px solid var(--kt-signal-teal);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
