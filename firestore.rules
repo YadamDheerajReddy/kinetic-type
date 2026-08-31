@@ -1,0 +1,18 @@
+rules_version = '2';
+
+// Kinetic Type — Backend Schema §06. Users can only ever read/write their own
+// subtree; corpora are public read-only, writable only by the Admin SDK (Cloud
+// Functions), never by clients directly.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null
+        && request.auth.uid == uid;
+    }
+
+    match /corpora/{domainId} {
+      allow read: if true;
+      allow write: if false; // admin SDK only
+    }
+  }
+}

@@ -14,17 +14,17 @@ proves the architecture holds together before Phase 1 builds the real typing eng
 
 ## Stack
 
-| Layer | Choice |
-| --- | --- |
-| UI framework | React 18 + TypeScript |
-| Typing surface | Custom Canvas 2D renderer (no native inputs) |
+| Layer              | Choice                                                                |
+| ------------------ | --------------------------------------------------------------------- |
+| UI framework       | React 18 + TypeScript                                                 |
+| Typing surface     | Custom Canvas 2D renderer (no native inputs)                          |
 | Background compute | Web Worker via [Comlink](https://github.com/GoogleChromeLabs/comlink) |
-| Local persistence | IndexedDB via [Dexie](https://dexie.org/) *(Phase 1)* |
-| State | Zustand *(Phase 1)* |
-| Styling | Tailwind CSS, tokens from the UI/UX Brief |
-| Cloud sync | Firebase — Auth, Firestore, Cloud Functions *(Phase 4)* |
-| Hosting | Vercel (Git-integrated preview/production deploys) |
-| Testing | Vitest (unit), Playwright (e2e / visual regression) |
+| Local persistence  | IndexedDB via [Dexie](https://dexie.org/) _(Phase 1)_                 |
+| State              | Zustand _(Phase 1)_                                                   |
+| Styling            | Tailwind CSS, tokens from the UI/UX Brief                             |
+| Cloud sync         | Firebase — Auth, Firestore, Cloud Functions _(Phase 4)_               |
+| Hosting            | Vercel (Git-integrated preview/production deploys)                    |
+| Testing            | Vitest (unit), Playwright (e2e / visual regression)                   |
 
 See [TRD §02](./docs/Kinetic_Type_02_TRD.pdf) for the full stack rationale.
 
@@ -42,17 +42,17 @@ product is built on (TRD §08 budgets it at <5ms p95 once real work replaces thi
 
 ## Scripts
 
-| Command | Does |
-| --- | --- |
-| `npm run dev` | Start the Vite dev server |
-| `npm run build` | Typecheck + production build |
-| `npm run test` | Run unit tests once (Vitest) |
-| `npm run test:watch` | Unit tests in watch mode |
-| `npm run test:e2e` | Run Playwright end-to-end tests |
-| `npm run lint` | ESLint |
-| `npm run format` | Prettier, writes changes |
+| Command                | Does                              |
+| ---------------------- | --------------------------------- |
+| `npm run dev`          | Start the Vite dev server         |
+| `npm run build`        | Typecheck + production build      |
+| `npm run test`         | Run unit tests once (Vitest)      |
+| `npm run test:watch`   | Unit tests in watch mode          |
+| `npm run test:e2e`     | Run Playwright end-to-end tests   |
+| `npm run lint`         | ESLint                            |
+| `npm run format`       | Prettier, writes changes          |
 | `npm run format:check` | Prettier, check only (used in CI) |
-| `npm run typecheck` | `tsc` with no emit |
+| `npm run typecheck`    | `tsc` with no emit                |
 
 ## Project structure
 
@@ -69,22 +69,39 @@ docs/        The six source documents this build follows
 Phase 1 adds `src/domains/` (lexers), `src/state/` (Zustand store), and a local persistence
 layer under `src/data/` (Dexie schema, per Backend Schema §02).
 
-## Firebase setup (needed starting Phase 4, not required yet)
+## Firebase
 
 The app is fully functional offline with zero Firebase config through Phase 3 — Firestore is only
-a backup/sync mirror (TRD §01). When Phase 4 starts:
+a backup/sync mirror (TRD §01), and nothing in the app code calls into Firebase yet. The
+`kinetic-type-99316` project is provisioned (Auth: Anonymous + Email/Password, Firestore in
+production mode) and the SDK is wired up in [`src/lib/firebase.ts`](./src/lib/firebase.ts), but
+Auth/Firestore integration into the actual product is Phase 4 work (Implementation Plan §06).
 
-1. Go to the [Firebase console](https://console.firebase.google.com) and create a project named
-   `kinetic-type` (or similar).
-2. Add a Web app to the project; copy the config values it gives you.
-3. Enable **Authentication → Sign-in method → Anonymous**, and Email/Password + Google as
-   upgrade options.
-4. Enable **Firestore Database** in production mode.
-5. Copy `.env.example` to `.env.local` and fill in the values from step 2.
-6. Repeat for separate `staging` and `prod` Firebase projects when ready (TRD §11 Environments).
+- `.env.local` (untracked, not in git) holds the real project's Web app config.
+- `firestore.rules` / `firestore.indexes.json` mirror Backend Schema §05-06 exactly — every
+  user can only read/write their own `users/{uid}` subtree; `corpora/*` is public read-only.
+- `firebase.json` configures the local Emulator Suite (Auth :9099, Firestore :8080,
+  Functions :5001, UI :4000) — dev should run against this, never the real project, per TRD §11.
 
-This step needs your own Google account, so it's one you'll do yourself — ask if you want a
-walk-through when Phase 4 comes up.
+**One-time setup on your machine** (needs your own Google account, so this is yours to run):
+
+```bash
+npx firebase login          # opens a browser to authenticate with the Google account
+                             # that owns the kinetic-type-99316 project
+npm run firebase:emulators  # starts Auth + Firestore emulators locally
+```
+
+Then set `VITE_USE_FIREBASE_EMULATORS=true` in `.env.local` to point the app at them instead of
+the real project.
+
+**Deploying security rules** (only once there's something worth protecting, i.e. Phase 4+):
+
+```bash
+npm run firebase:deploy:rules
+```
+
+TRD §11 also calls for separate `staging` and `prod` Firebase projects — `kinetic-type-99316` is
+serving as the single dev project for now; splitting that out is a Phase 4/5 task, not urgent yet.
 
 ## Deployment
 
