@@ -46,7 +46,9 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
   const correctCountRef = useRef(0)
   const keystrokeTimestampsRef = useRef<number[]>([])
   const pendingEventsRef = useRef<KeyEvent[]>([])
-  const sessionStartRef = useRef(0)
+  // null until the first keystroke — the clock starts on first input, not on
+  // clicking "Start session", so thinking time before typing doesn't tax WPM.
+  const sessionStartRef = useRef<number | null>(null)
   const totalPausedMsRef = useRef(0)
   const pausedAtRef = useRef<number | null>(null)
   const endedRef = useRef(false)
@@ -54,6 +56,7 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
   const [liveStats, setLiveStats] = useState({ wpmNet: 0, accuracy: 100, elapsedSec: 0 })
 
   function elapsedMsAt(now: number): number {
+    if (sessionStartRef.current === null) return 0
     const pausedSoFar =
       totalPausedMsRef.current + (pausedAtRef.current !== null ? now - pausedAtRef.current : 0)
     return Math.max(0, now - sessionStartRef.current - pausedSoFar)
@@ -83,7 +86,7 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
       accuracy: computeAccuracy(correctCountRef.current, typedCountRef.current),
       burst_consistency: computeBurstConsistency(
         keystrokeTimestampsRef.current,
-        sessionStartRef.current,
+        sessionStartRef.current ?? 0,
       ),
       timestamp: Date.now(),
     })
@@ -106,7 +109,7 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
     pendingEventsRef.current = []
     totalPausedMsRef.current = 0
     pausedAtRef.current = null
-    sessionStartRef.current = performance.now()
+    sessionStartRef.current = null
 
     void api.current?.startSession('PROSE')
 
@@ -126,6 +129,7 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
       const expected = targetTextRef.current[positionRef.current]
       const correct = e.key === expected
       const t = performance.now()
+      if (sessionStartRef.current === null) sessionStartRef.current = t
 
       correctFlagsRef.current.push(correct)
       typedCountRef.current += 1
@@ -161,6 +165,9 @@ export function TypingStage({ api, onComplete }: TypingStageProps) {
     }
 
     function onVisibilityChange() {
+      // nothing to pause before the clock has even started
+      if (sessionStartRef.current === null) return
+
       if (document.hidden) {
         pausedAtRef.current = performance.now()
         void api.current?.resetPairing()
