@@ -5,7 +5,8 @@ import type { HeatmapEntry } from '../engine/types'
 const TEAL_HSL = { h: 174, s: 42, l: 61 }
 const AMBER_HSL = { h: 14, s: 100, l: 69 }
 
-function interpolate(t: number): string {
+/** Exported for reuse anywhere else a fast->slow intensity needs the same ramp (e.g. FingerLoadChart). */
+export function rampColor(t: number): string {
   const h = TEAL_HSL.h + (AMBER_HSL.h - TEAL_HSL.h) * t
   const s = TEAL_HSL.s + (AMBER_HSL.s - TEAL_HSL.s) * t
   const l = TEAL_HSL.l + (AMBER_HSL.l - TEAL_HSL.l) * t
@@ -29,7 +30,7 @@ export function computeHeatmapColors(entries: readonly HeatmapEntry[]): Map<stri
 
   const colors = new Map<string, string>()
   for (const entry of withData) {
-    colors.set(entry.key, interpolate((entry.avgLatencyMs - min) / range))
+    colors.set(entry.key, rampColor((entry.avgLatencyMs - min) / range))
   }
   return colors
 }

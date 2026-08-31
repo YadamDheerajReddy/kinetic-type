@@ -2,8 +2,18 @@ import { DOMAIN_LEXERS } from '../domains'
 import { db } from '../data/db'
 import { computeTopPairs, initialMatrixState, processKeyEventBatch } from './ngramMatrix'
 import { reconcileSrsEntry, selectDuePairs } from './srs'
+import { checkPersonalBest, todayUtc, updateStreak } from './streaks'
 import { synthesizeText } from './synthesizer'
-import type { Domain, HeatmapEntry, KeyEvent, PairStat, SessionSummary, SrsEntry } from './types'
+import type {
+  Domain,
+  HeatmapEntry,
+  KeyEvent,
+  PairStat,
+  PersonalBest,
+  SessionSummary,
+  SrsEntry,
+  StreakRecord,
+} from './types'
 
 /**
  * Session orchestration — runs inside the Adaptive Engine worker (worker.ts just
@@ -92,7 +102,10 @@ export interface NextChunk {
  * runs low (< 40 chars, TRD §04 Worker Execution Budget), so a pair fumbled
  * mid-session re-enters the stream within seconds.
  */
-export async function getNextChunk(minChars: number): Promise<NextChunk> {
+export async function getNextChunk(
+  minChars: number,
+  mode: 'adaptive' | 'drill' = 'adaptive',
+): Promise<NextChunk> {
   const lexer = DOMAIN_LEXERS[activeDomain]
   const now = Date.now()
   const dueSrsPairIds = selectDuePairs([...srsCache.values()], now).map((entry) => entry.pair_id)
@@ -106,6 +119,8 @@ export async function getNextChunk(minChars: number): Promise<NextChunk> {
     weightedPairs: [...statsCache.values()],
     dueSrsPairIds,
     targetLength: minChars,
+    // Focused Drill Mode: no contextual flow, every word hits a weak pair.
+    targetRatio: mode === 'drill' ? 1 : undefined,
   })
 
   return { text, targetedPair: topPair?.pair_id ?? null }
@@ -198,4 +213,49 @@ export async function getHistoryView(domain: Domain, sessionLimit = 10): Promise
   )
 
   return { sessions, flaggedPairs }
+}
+
+export interface MilestoneResult {
+  streak: StreakRecord
+  personalBest: PersonalBest
+  isNewWpmBest: boolean
+  isNewAccuracyBest: boolean
+}
+
+/**
+ * Streaks & Personal Bests — separate from endSession/session_logs (Backend
+ * Schema's persisted contract) since these are a new, client-side-only
+ * concept layered on top, not part of the original schema. Called right
+ * after endSession from the main thread.
+ */
+export async function updateMilestones(
+  domain: Domain,
+  wpmNet: number,
+  accuracy: number,
+  timestamp: number,
+): Promise<MilestoneResult> {
+  const [existingStreak, existingBest] = await Promise.all([
+    db.streaks.get(domain),
+    db.personal_bests.get(domain),
+  ])
+
+  const streak = updateStreak(existingStreak, domain, todayUtc(timestamp))
+  const {
+    record: personalBest,
+    isNewWpmBest,
+    isNewAccuracyBest,
+  } = checkPersonalBest(existingBest, domain, wpmNet, accuracy, timestamp)
+
+  await Promise.all([db.streaks.put(streak), db.personal_bests.put(personalBest)])
+
+  return { streak, personalBest, isNewWpmBest, isNewAccuracyBest }
+}
+
+/** Export Your Data: the user's full session history for one domain, no limit. */
+export async function exportSessionHistory(domain: Domain): Promise<SessionSummary[]> {
+  return db.session_logs
+    .where('[domain_type+timestamp]')
+    .between([domain, 0], [domain, Infinity])
+    .reverse()
+    .toArray()
 }

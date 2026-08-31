@@ -18,6 +18,22 @@ stripped to instant color-only changes under `prefers-reduced-motion`. No accoun
 (Phase 4); Focus Mode (light theme) remains deliberately deferred — not one of Phase 3's five
 named workstreams.
 
+**Beyond the phased plan** — six extra features, not called for by any of the six docs, added on
+request between Phase 3 and Phase 4:
+
+- **Finger-load analysis** — the heatmap reduced to which _finger_ is your bottleneck, not just
+  which key (`src/engine/fingerMap.ts`)
+- **Live rhythm waveform** — an EKG-style line plotting your keystroke cadence in real time,
+  during the session itself, not just after
+- **Streaks & personal bests** — the "D7 STREAK" stat tile from the original UI/UX Brief mockup
+  (§10), never wired up until now, plus a teal glow when a session beats your prior best
+- **Weakness Forecast** — flags pairs trending _worse_ across recent sessions on the History
+  screen, not just whatever's currently slow (`src/engine/regression.ts`)
+- **Focused Drill Mode** — an opt-in session that skips flow text entirely, serving only words
+  that contain your weak pairs (`getNextChunk(chars, 'drill')`)
+- **Export Your Data** — full session history as CSV from the History screen, since it's your
+  local data (App Flow §05 had foreshadowed this as a deferred "Share/Export" feature)
+
 ## Stack
 
 | Layer              | Choice                                                                |

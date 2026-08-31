@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { db } from '../data/db'
 import {
   endSession,
+  exportSessionHistory,
   getHeatmapData,
   getHistoryView,
   getNextChunk,
   processBatch,
   startSession,
+  updateMilestones,
 } from './session'
 import type { KeyEvent } from './types'
 
@@ -20,6 +22,8 @@ beforeEach(async () => {
   await db.session_logs.clear()
   await db.srs_queue.clear()
   await db.pair_history.clear()
+  await db.streaks.clear()
+  await db.personal_bests.clear()
 })
 
 describe('session orchestration', () => {
@@ -174,5 +178,61 @@ describe('session orchestration', () => {
     expect(view.sessions.map((s) => s.session_id)).toEqual(['session-2', 'session-1']) // most recent first
     expect(view.flaggedPairs[0].pairId).toBe('a->b')
     expect(view.flaggedPairs[0].trend).toEqual([200, 150]) // chronological order
+  })
+
+  it('getNextChunk in drill mode uses only weak-pair words, no flow (Focused Drill Mode)', async () => {
+    await startSession('PROSE')
+    for (let i = 0; i < 5; i++) {
+      const base = i * 1000
+      await processBatch([key('a', 'up', base, true), key('b', 'down', base + 300, false)])
+    }
+
+    const { text } = await getNextChunk(200, 'drill')
+    // proseLexer's corpus contains plenty of words without "ab" in them; in drill
+    // mode every word returned should still contain the weak pair's substring
+    for (const word of text.split(' ')) {
+      expect(word.toLowerCase()).toContain('ab')
+    }
+  })
+
+  it('updateMilestones tracks a daily streak and flags a new personal best', async () => {
+    const day1 = Date.UTC(2026, 7, 30)
+    const first = await updateMilestones('PROSE', 60, 95, day1)
+    expect(first.streak.currentStreak).toBe(1)
+    expect(first.isNewWpmBest).toBe(false) // baseline session, nothing to beat yet
+
+    const day2 = Date.UTC(2026, 7, 31)
+    const second = await updateMilestones('PROSE', 70, 90, day2)
+    expect(second.streak.currentStreak).toBe(2)
+    expect(second.isNewWpmBest).toBe(true) // 70 > 60
+    expect(second.isNewAccuracyBest).toBe(false) // 90 < 95
+
+    const persisted = await db.streaks.get('PROSE')
+    expect(persisted?.currentStreak).toBe(2)
+  })
+
+  it('exportSessionHistory returns the full session history for a domain, most recent first', async () => {
+    await startSession('PROSE')
+    await endSession({
+      session_id: 'a',
+      domain_type: 'PROSE',
+      wpm_raw: 10,
+      wpm_net: 10,
+      accuracy: 100,
+      burst_consistency: 1,
+      timestamp: 100,
+    })
+    await endSession({
+      session_id: 'b',
+      domain_type: 'PROSE',
+      wpm_raw: 10,
+      wpm_net: 10,
+      accuracy: 100,
+      burst_consistency: 1,
+      timestamp: 200,
+    })
+
+    const exported = await exportSessionHistory('PROSE')
+    expect(exported.map((s) => s.session_id)).toEqual(['b', 'a'])
   })
 })

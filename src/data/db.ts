@@ -1,5 +1,13 @@
 import Dexie, { type EntityTable, type Table } from 'dexie'
-import type { Domain, PairHistoryEntry, PairStat, SessionSummary, SrsEntry } from '../engine/types'
+import type {
+  Domain,
+  PairHistoryEntry,
+  PairStat,
+  PersonalBest,
+  SessionSummary,
+  SrsEntry,
+  StreakRecord,
+} from '../engine/types'
 
 /**
  * Local-first persistence — Backend Schema §02. IndexedDB is the permanent source
@@ -21,6 +29,8 @@ export class KineticTypeDB extends Dexie {
   session_logs!: EntityTable<SessionSummary, 'session_id'>
   srs_queue!: Table<SrsEntry, [string, Domain]>
   pair_history!: EntityTable<PairHistoryEntry, 'id'>
+  streaks!: EntityTable<StreakRecord, 'domain'>
+  personal_bests!: EntityTable<PersonalBest, 'domain'>
 
   constructor() {
     super('KineticTypeDB')
@@ -38,6 +48,12 @@ export class KineticTypeDB extends Dexie {
     // Schema — see PairHistoryEntry in engine/types.ts for why).
     this.version(3).stores({
       pair_history: '++id, [pair_id+domain], timestamp',
+    })
+    // Streaks & personal bests (not in Backend Schema) — one row per domain,
+    // keyed directly by domain since there's exactly one current record each.
+    this.version(4).stores({
+      streaks: 'domain',
+      personal_bests: 'domain',
     })
   }
 }

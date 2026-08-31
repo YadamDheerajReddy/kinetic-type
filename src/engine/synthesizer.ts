@@ -11,6 +11,13 @@ export interface SynthesizeInput {
   weightedPairs: readonly PairStat[]
   dueSrsPairIds: readonly string[]
   targetLength: number
+  /**
+   * Focused Drill Mode: overrides the standard 70/30 targeted/flow split.
+   * 1.0 = every word contains a top-weighted pair, no contextual flow at
+   * all — an opt-in, higher-intensity practice mode (App Flow §07-style
+   * "adaptivity intensity" concept, just at the other end of the dial).
+   */
+  targetRatio?: number
   /** Injectable for deterministic tests; defaults to Math.random. */
   random?: () => number
 }
@@ -35,6 +42,7 @@ function wordsContainingPair(words: readonly string[], pairId: string): string[]
 export function synthesizeText(input: SynthesizeInput): string {
   const { words, weightedPairs, dueSrsPairIds, targetLength } = input
   const random = input.random ?? Math.random
+  const targetRatio = input.targetRatio ?? TARGET_WORD_RATIO
 
   if (words.length === 0) return ''
 
@@ -55,7 +63,7 @@ export function synthesizeText(input: SynthesizeInput): string {
 
     if (reviewPool.length > 0 && roll < REVIEW_INSERTION_CHANCE) {
       pool = reviewPool
-    } else if (targetedPool.length > 0 && roll < TARGET_WORD_RATIO) {
+    } else if (targetedPool.length > 0 && roll < targetRatio) {
       pool = targetedPool
     }
 

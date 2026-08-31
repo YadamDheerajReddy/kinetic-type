@@ -77,3 +77,21 @@ export interface HeatmapEntry {
   avgLatencyMs: number
   occurrences: number
 }
+
+// Not in Backend Schema (added post-Phase-3) — the original UI/UX Brief component
+// library mockup (§10) shows a "D7 STREAK" stat tile that nothing ever computed.
+// Dates are UTC YYYY-MM-DD strings; a known simplification (a session right at a
+// local midnight boundary could count on the "wrong" day for some timezones).
+export interface StreakRecord {
+  domain: Domain
+  currentStreak: number
+  longestStreak: number
+  lastActiveDate: string
+}
+
+export interface PersonalBest {
+  domain: Domain
+  bestWpmNet: number
+  bestAccuracy: number
+  updatedAt: number
+}

@@ -10,7 +10,10 @@ import {
 } from '../engine/metrics'
 import type { AdaptiveEngineApi } from '../engine/worker'
 import type { Domain, KeyEvent, SessionSummary } from '../engine/types'
+import { Sparkline } from './Sparkline'
 import { lineIndexForPosition, wrapText, type WrappedLine } from './wrapText'
+
+const LIVE_RHYTHM_WINDOW = 30
 
 // Fixed-length session for Phase 1/2 (Implementation Plan §03) — user-selectable
 // session length (time or char-count) is FR-13, P2, deferred.
@@ -55,6 +58,8 @@ function lerpColor(
 interface TypingStageProps {
   api: React.RefObject<Comlink.Remote<AdaptiveEngineApi> | null>
   domain: Domain
+  /** Focused Drill Mode: text is 100% weak-pair words, no contextual flow. */
+  mode?: 'adaptive' | 'drill'
   onComplete: (
     summary: SessionSummary,
     microPauses: MicroPause[],
@@ -62,7 +67,7 @@ interface TypingStageProps {
   ) => void
 }
 
-export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
+export function TypingStage({ api, domain, mode = 'adaptive', onComplete }: TypingStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   const targetTextRef = useRef('')
@@ -84,9 +89,11 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
   const pausedAtRef = useRef<number | null>(null)
   const endedRef = useRef(false)
   const fetchingChunkRef = useRef(false)
+  const gapHistoryRef = useRef<number[]>([]) // rolling inter-keystroke gaps, for the live rhythm waveform
 
   const [liveStats, setLiveStats] = useState({ wpmNet: 0, accuracy: 100, elapsedSec: 0 })
   const [targetedPair, setTargetedPair] = useState<string | null>(null)
+  const [liveRhythm, setLiveRhythm] = useState<number[]>([])
 
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -120,7 +127,10 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
 
     fetchingChunkRef.current = true
     const previousLength = targetTextRef.current.length
-    const result = await api.current?.getNextChunk(Math.min(CHUNK_FETCH_CHARS, remainingToCap + 40))
+    const result = await api.current?.getNextChunk(
+      Math.min(CHUNK_FETCH_CHARS, remainingToCap + 40),
+      mode,
+    )
     if (result && !endedRef.current) {
       targetTextRef.current = targetTextRef.current
         ? `${targetTextRef.current} ${result.text}`
@@ -177,7 +187,9 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
     totalPausedMsRef.current = 0
     pausedAtRef.current = null
     sessionStartRef.current = null
+    gapHistoryRef.current = []
     setTargetedPair(null)
+    setLiveRhythm([])
 
     void (async () => {
       await api.current?.startSession(domain)
@@ -208,6 +220,14 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
       typedCountRef.current += 1
       if (correct) correctCountRef.current += 1
       positionRef.current += 1
+
+      const priorTimestamp =
+        keystrokeTimestampsRef.current[keystrokeTimestampsRef.current.length - 1]
+      if (priorTimestamp !== undefined) {
+        gapHistoryRef.current = [...gapHistoryRef.current, t - priorTimestamp].slice(
+          -LIVE_RHYTHM_WINDOW,
+        )
+      }
       keystrokeTimestampsRef.current.push(t)
 
       pendingEventsRef.current.push({
@@ -267,6 +287,7 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
         accuracy: computeAccuracy(correctCountRef.current, typedCountRef.current),
         elapsedSec: Math.floor(elapsed / 1000),
       })
+      setLiveRhythm(gapHistoryRef.current)
     }, 200)
 
     let frame: number
@@ -387,7 +408,7 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
       linesRef.current = []
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- session setup runs once per mount by design
-  }, [domain])
+  }, [domain, mode])
 
   const activeLexer = DOMAIN_LEXERS[domain]
 
@@ -406,6 +427,11 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
             {lexer.glyph} {lexer.label.toUpperCase()}
           </span>
         ))}
+        {mode === 'drill' && (
+          <span className="kt-mono inline-flex items-center gap-1.5 rounded-full bg-engine-violet px-3 py-1 text-body font-medium text-ink">
+            ◆ Drill mode
+          </span>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -418,6 +444,15 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
           valueClassName="text-friction-amber"
         />
       </div>
+
+      {liveRhythm.length >= 2 && (
+        <div className="flex items-center gap-2 rounded border border-hairline bg-panel px-4 py-2">
+          <span className="kt-mono text-eyebrow uppercase tracking-[0.12em] text-faint">
+            Rhythm
+          </span>
+          <Sparkline values={liveRhythm} color="#4FD1C5" width={200} height={28} />
+        </div>
+      )}
 
       <canvas
         ref={canvasRef}

@@ -1,9 +1,11 @@
 import * as Comlink from 'comlink'
 import { useEffect, useState } from 'react'
 import { DOMAIN_LEXERS } from '../domains'
+import { detectTrendDirection } from '../engine/regression'
 import type { HistoryView as HistoryViewData } from '../engine/session'
 import type { Domain } from '../engine/types'
 import type { AdaptiveEngineApi } from '../engine/worker'
+import { downloadCsv, sessionsToCsv } from './csvExport'
 import { KeycapChip } from './KeycapChip'
 import { Sparkline } from './Sparkline'
 
@@ -22,6 +24,7 @@ export function HistoryView({
   onBack: () => void
 }) {
   const [data, setData] = useState<HistoryViewData | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -32,6 +35,18 @@ export function HistoryView({
       cancelled = true
     }
   }, [api, domain])
+
+  async function handleExport() {
+    setExporting(true)
+    try {
+      const sessions = await api.current?.exportSessionHistory(domain)
+      if (sessions && sessions.length > 0) {
+        downloadCsv(`kinetic-type-${domain.toLowerCase()}-history.csv`, sessionsToCsv(sessions))
+      }
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const lexer = DOMAIN_LEXERS[domain]
   const wpmTrend = data?.sessions
@@ -49,13 +64,23 @@ export function HistoryView({
         <span className="kt-mono text-eyebrow uppercase tracking-[0.12em] text-signal-teal">
           ◆ History & trends — {lexer.label} mode
         </span>
-        <button
-          type="button"
-          onClick={onBack}
-          className="kt-mono rounded border border-hairline px-3 py-1 text-body text-cream transition-colors duration-160 ease-kt-in-out hover:border-signal-teal"
-        >
-          Back
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => void handleExport()}
+            disabled={exporting || !data || data.sessions.length === 0}
+            className="kt-mono rounded border border-hairline px-3 py-1 text-body text-cream transition-colors duration-160 ease-kt-in-out hover:border-signal-teal disabled:opacity-40"
+          >
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
+          <button
+            type="button"
+            onClick={onBack}
+            className="kt-mono rounded border border-hairline px-3 py-1 text-body text-cream transition-colors duration-160 ease-kt-in-out hover:border-signal-teal"
+          >
+            Back
+          </button>
+        </div>
       </div>
 
       {!data ? (
@@ -83,19 +108,31 @@ export function HistoryView({
 
           <div className="flex flex-col gap-3">
             <h3 className="font-display text-h2 text-cream">Your most-flagged transitions</h3>
+            <p className="text-body text-faint">
+              Weakness Forecast: pairs trending worse across recent sessions are flagged, not just
+              whatever's currently slow.
+            </p>
             {data.flaggedPairs.length === 0 ? (
               <p className="kt-mono text-body text-faint">
                 Nothing flagged repeatedly yet — keep practicing and patterns will show up here.
               </p>
             ) : (
               data.flaggedPairs.map(({ pairId, trend }) => {
-                const improving = trend.length >= 2 && trend[trend.length - 1] < trend[0]
+                const direction = detectTrendDirection(trend)
                 return (
                   <div key={pairId} className="flex items-center justify-between gap-4">
-                    <KeycapChip>{pairId.replace('->', ' → ')}</KeycapChip>
+                    <div className="flex items-center gap-2">
+                      <KeycapChip>{pairId.replace('->', ' → ')}</KeycapChip>
+                      {direction === 'regressing' && (
+                        <span className="kt-mono text-body text-friction-amber">▲ regressing</span>
+                      )}
+                      {direction === 'improving' && (
+                        <span className="kt-mono text-body text-signal-teal">▼ improving</span>
+                      )}
+                    </div>
                     <Sparkline
                       values={trend}
-                      color={improving ? '#4FD1C5' : '#FF8A5C'}
+                      color={direction === 'regressing' ? '#FF8A5C' : '#4FD1C5'}
                       width={120}
                       height={32}
                     />

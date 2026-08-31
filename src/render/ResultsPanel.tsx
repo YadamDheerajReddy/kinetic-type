@@ -1,9 +1,11 @@
 import * as Comlink from 'comlink'
 import { useEffect, useState } from 'react'
+import { computeFingerLoads } from '../engine/fingerMap'
 import type { MicroPause } from '../engine/fatigue'
 import type { HeatmapEntry, SessionSummary } from '../engine/types'
-import type { AdaptiveEngineApi } from '../engine/worker'
+import type { AdaptiveEngineApi, MilestoneResult } from '../engine/worker'
 import { FatigueTimeline } from './FatigueTimeline'
+import { FingerLoadChart } from './FingerLoadChart'
 import { KeycapChip } from './KeycapChip'
 import { KeyboardHeatmap } from './KeyboardHeatmap'
 import { Sparkline } from './Sparkline'
@@ -12,11 +14,14 @@ interface StatTileProps {
   value: string
   label: string
   valueClassName?: string
+  glow?: boolean
 }
 
-function StatTile({ value, label, valueClassName }: StatTileProps) {
+function StatTile({ value, label, valueClassName, glow }: StatTileProps) {
   return (
-    <div className="rounded border border-hairline bg-panel px-4 py-3">
+    <div
+      className={`rounded border border-hairline bg-panel px-4 py-3 ${glow ? 'kt-milestone' : ''}`}
+    >
       <div className={`kt-mono text-stat ${valueClassName ?? 'text-cream'}`}>{value}</div>
       <div className="kt-mono text-eyebrow uppercase tracking-[0.12em] text-faint">{label}</div>
     </div>
@@ -29,6 +34,7 @@ export function ResultsPanel({
   microPauses,
   sessionDurationMs,
   onTypeAgain,
+  onDrill,
   onSwitchDomain,
   onViewHistory,
 }: {
@@ -37,14 +43,19 @@ export function ResultsPanel({
   microPauses: MicroPause[]
   sessionDurationMs: number
   onTypeAgain: () => void
+  onDrill: () => void
   onSwitchDomain: () => void
   onViewHistory: () => void
 }) {
   const [heatmap, setHeatmap] = useState<HeatmapEntry[]>([])
   const [topPairTrend, setTopPairTrend] = useState<number[]>([])
+  const [milestone, setMilestone] = useState<MilestoneResult | null>(null)
 
   useEffect(() => {
     void api.current?.getHeatmapData().then((entries) => setHeatmap(entries))
+    void api.current
+      ?.updateMilestones(summary.domain_type, summary.wpm_net, summary.accuracy, summary.timestamp)
+      .then((result) => setMilestone(result))
 
     const topPairId = summary.top_pairs[0]?.pair
     if (topPairId) {
@@ -63,6 +74,7 @@ export function ResultsPanel({
     topPairTrend.length >= 2 && topPairTrend[0] > 0
       ? ((topPairTrend[topPairTrend.length - 1] - topPairTrend[0]) / topPairTrend[0]) * 100
       : null
+  const fingerLoads = computeFingerLoads(heatmap)
 
   return (
     <div className="kt-panel-enter flex flex-col gap-6 rounded border border-hairline bg-panel p-6">
@@ -73,13 +85,18 @@ export function ResultsPanel({
         ◆ Session complete — {summary.domain_type} mode
       </span>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <StatTile
           value={summary.wpm_net.toFixed(0)}
           label="WPM Net"
           valueClassName="text-signal-teal"
+          glow={milestone?.isNewWpmBest}
         />
-        <StatTile value={`${summary.accuracy.toFixed(1)}%`} label="Accuracy" />
+        <StatTile
+          value={`${summary.accuracy.toFixed(1)}%`}
+          label="Accuracy"
+          glow={milestone?.isNewAccuracyBest}
+        />
         <StatTile
           value={`${(summary.burst_consistency * 100).toFixed(0)}%`}
           label="Burst consistency"
@@ -97,11 +114,32 @@ export function ResultsPanel({
               : 'text-friction-amber'
           }
         />
+        <StatTile
+          value={milestone ? `${milestone.streak.currentStreak}` : '—'}
+          label="Day streak"
+          valueClassName="text-engine-violet"
+        />
       </div>
 
-      <div className="flex flex-col gap-2">
-        <h3 className="font-display text-h2 text-cream">Latency heatmap</h3>
-        <KeyboardHeatmap entries={heatmap} hotKey={topPairDestKey} />
+      {(milestone?.isNewWpmBest || milestone?.isNewAccuracyBest) && (
+        <p className="kt-mono text-body text-signal-teal">
+          ◆ New personal best{milestone.isNewWpmBest && milestone.isNewAccuracyBest ? 's' : ''} —{' '}
+          {[milestone.isNewWpmBest && 'WPM', milestone.isNewAccuracyBest && 'accuracy']
+            .filter(Boolean)
+            .join(' and ')}
+          .
+        </p>
+      )}
+
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+        <div className="flex flex-col gap-2">
+          <h3 className="font-display text-h2 text-cream">Latency heatmap</h3>
+          <KeyboardHeatmap entries={heatmap} hotKey={topPairDestKey} />
+        </div>
+        <div className="flex flex-col gap-2">
+          <h3 className="font-display text-h2 text-cream">Finger-load analysis</h3>
+          <FingerLoadChart loads={fingerLoads} />
+        </div>
       </div>
 
       {topPair && (
@@ -144,6 +182,16 @@ export function ResultsPanel({
         >
           Type again
         </button>
+        {summary.top_pairs.length > 0 && (
+          <button
+            type="button"
+            onClick={onDrill}
+            title="A focused session using only words that contain your weak pairs — no flow text."
+            className="kt-mono rounded bg-engine-violet px-4 py-2 text-body font-medium text-ink transition-colors duration-160 ease-kt-in-out hover:opacity-90"
+          >
+            Drill weak pairs
+          </button>
+        )}
         <button
           type="button"
           onClick={onViewHistory}

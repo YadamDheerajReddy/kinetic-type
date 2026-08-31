@@ -8,6 +8,7 @@ import { ResultsPanel } from '../render/ResultsPanel'
 import { TypingStage } from '../render/TypingStage'
 
 type Status = 'idle' | 'active' | 'complete' | 'history'
+type SessionMode = 'adaptive' | 'drill'
 
 // App Flow §02: "Domain selection persists locally as the default for next visit."
 const LAST_DOMAIN_KEY = 'kinetic-type:last-domain'
@@ -29,6 +30,7 @@ export function App() {
   const [status, setStatus] = useState<Status>('idle')
   const [lastDomain, setLastDomain] = useState<Domain | null>(loadLastDomain)
   const [domain, setDomain] = useState<Domain>(() => loadLastDomain() ?? 'PROSE')
+  const [sessionMode, setSessionMode] = useState<SessionMode>('adaptive')
   const [summary, setSummary] = useState<SessionSummary | null>(null)
   const [microPauses, setMicroPauses] = useState<MicroPause[]>([])
   const [sessionDurationMs, setSessionDurationMs] = useState(0)
@@ -36,6 +38,7 @@ export function App() {
   function handleSelectDomain(selected: Domain) {
     setDomain(selected)
     setLastDomain(selected)
+    setSessionMode('adaptive')
     window.localStorage.setItem(LAST_DOMAIN_KEY, selected)
     setSummary(null)
     setStatus('active')
@@ -69,6 +72,7 @@ export function App() {
         <TypingStage
           api={api}
           domain={domain}
+          mode={sessionMode}
           onComplete={(result, pauses, durationMs) => {
             setSummary(result)
             setMicroPauses(pauses)
@@ -84,7 +88,14 @@ export function App() {
           api={api}
           microPauses={microPauses}
           sessionDurationMs={sessionDurationMs}
-          onTypeAgain={() => setStatus('active')}
+          onTypeAgain={() => {
+            setSessionMode('adaptive')
+            setStatus('active')
+          }}
+          onDrill={() => {
+            setSessionMode('drill')
+            setStatus('active')
+          }}
           onSwitchDomain={() => setStatus('idle')}
           onViewHistory={() => setStatus('history')}
         />

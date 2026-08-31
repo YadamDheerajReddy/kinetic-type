@@ -107,4 +107,20 @@ describe('synthesizeText — adaptive loop', () => {
       synthesizeText({ words: [], weightedPairs: [], dueSrsPairIds: [], targetLength: 50 }),
     ).toBe('')
   })
+
+  it('Focused Drill Mode (targetRatio=1) uses only words containing a top pair, no flow', () => {
+    const words = ['apple', 'banana', 'orange', 'quiet', 'quilt', 'unique']
+    const text = synthesizeText({
+      words,
+      weightedPairs: [makePairStat('q->u', 500)],
+      dueSrsPairIds: [],
+      targetLength: 500,
+      targetRatio: 1,
+      random: mulberry32(3),
+    })
+
+    for (const word of text.split(' ')) {
+      expect(word.includes('qu')).toBe(true)
+    }
+  })
 })
