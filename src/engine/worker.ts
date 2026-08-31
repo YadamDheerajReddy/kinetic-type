@@ -1,15 +1,19 @@
 import * as Comlink from 'comlink'
-import { echoKeyEvent } from './adaptiveEngine'
-import type { EchoResult, KeyEvent } from './types'
+import { endSession, processBatch, resetPairing, startSession } from './session'
+import type { Domain, KeyEvent, SessionSummary } from './types'
 
 export interface AdaptiveEngineApi {
-  echo(event: KeyEvent): EchoResult
+  startSession(domain: Domain): Promise<void>
+  processBatch(events: KeyEvent[]): Promise<void>
+  resetPairing(): Promise<void>
+  endSession(partial: Omit<SessionSummary, 'top_pairs'>): Promise<SessionSummary>
 }
 
 const api: AdaptiveEngineApi = {
-  echo(event) {
-    return echoKeyEvent(event, performance.now())
-  },
+  startSession,
+  processBatch,
+  resetPairing: async () => resetPairing(),
+  endSession,
 }
 
 Comlink.expose(api)

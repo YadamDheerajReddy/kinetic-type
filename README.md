@@ -9,8 +9,11 @@ Implementation Plan this build follows phase by phase.
 
 ## Status
 
-**Phase 0 — Setup & Foundations** (Implementation Plan §02). Nothing user-facing yet; this phase
-proves the architecture holds together before Phase 1 builds the real typing engine.
+**Phase 1 — Engine Foundation** (Implementation Plan §03). A real, honest Prose-mode typing test:
+high-precision keystroke capture, a virtualized canvas renderer with word-wrapped text, live
+WPM/accuracy/burst-consistency, and a working n-gram latency matrix persisted to IndexedDB. No
+adaptivity yet — the text stream doesn't react to your weak pairs (that's Phase 2), and there's
+no Dev/CLI mode, heatmap, or account sync yet either.
 
 ## Stack
 
@@ -19,8 +22,8 @@ proves the architecture holds together before Phase 1 builds the real typing eng
 | UI framework       | React 18 + TypeScript                                                 |
 | Typing surface     | Custom Canvas 2D renderer (no native inputs)                          |
 | Background compute | Web Worker via [Comlink](https://github.com/GoogleChromeLabs/comlink) |
-| Local persistence  | IndexedDB via [Dexie](https://dexie.org/) _(Phase 1)_                 |
-| State              | Zustand _(Phase 1)_                                                   |
+| Local persistence  | IndexedDB via [Dexie](https://dexie.org/), inside the worker          |
+| State              | Zustand — installed, not wired in yet (Phase 1 state is local/refs)   |
 | Styling            | Tailwind CSS, tokens from the UI/UX Brief                             |
 | Cloud sync         | Firebase — Auth, Firestore, Cloud Functions _(Phase 4)_               |
 | Hosting            | Vercel (Git-integrated preview/production deploys)                    |
@@ -35,10 +38,10 @@ npm install
 npm run dev
 ```
 
-Opens at `http://localhost:5173`. Type into the "Architecture spike" panel — it captures a
-keystroke on the main thread, timestamps it, round-trips it through the Adaptive Engine worker,
-and paints the result to canvas. That round trip is the latency-critical pipeline the entire
-product is built on (TRD §08 budgets it at <5ms p95 once real work replaces this stub).
+Opens at `http://localhost:5173`. Press **Start session** and type — Prose-mode text streams in,
+each keystroke is timestamped and color-coded (teal = correct, amber = miss, blue block = cursor),
+live WPM/accuracy/elapsed update above the stage, and pressing **Esc** (or finishing the passage)
+ends the session and shows your slowest key-pair transitions.
 
 ## Scripts
 
@@ -58,16 +61,19 @@ product is built on (TRD §08 budgets it at <5ms p95 once real work replaces thi
 
 ```
 src/
-  app/       Root shell (App.tsx)
-  engine/    Adaptive Engine worker + shared main-thread <-> worker types
-  render/    Canvas rendering components
+  app/       Root shell (App.tsx) — idle / active / complete session states
+  domains/   Domain lexers (prose.ts is the only one so far; Dev/CLI are Phase 2)
+  data/      Dexie schema (ngram_stats, session_logs) — used from inside the worker
+  engine/    Adaptive Engine worker, session orchestration, n-gram matrix, metrics
+  render/    Canvas typing stage, results panel, small UI motifs (keycap chips)
+  lib/       Firebase client init (not called from app code yet — Phase 4)
   test/      Vitest setup
 e2e/         Playwright end-to-end specs
 docs/        The six source documents this build follows
 ```
 
-Phase 1 adds `src/domains/` (lexers), `src/state/` (Zustand store), and a local persistence
-layer under `src/data/` (Dexie schema, per Backend Schema §02).
+Phase 2 adds the Dev and CLI lexers, the W(P) weighting formula and Dynamic Material
+Synthesizer (adaptive text selection), and the spaced-repetition queue.
 
 ## Firebase
 
