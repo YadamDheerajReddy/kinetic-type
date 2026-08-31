@@ -1,7 +1,14 @@
 import 'fake-indexeddb/auto' // must precede the db import — patches globalThis.indexedDB
 import { beforeEach, describe, expect, it } from 'vitest'
 import { db } from '../data/db'
-import { endSession, getNextChunk, processBatch, startSession } from './session'
+import {
+  endSession,
+  getHeatmapData,
+  getHistoryView,
+  getNextChunk,
+  processBatch,
+  startSession,
+} from './session'
 import type { KeyEvent } from './types'
 
 function key(char: string, type: 'down' | 'up', t: number, correct?: boolean): KeyEvent {
@@ -12,6 +19,7 @@ beforeEach(async () => {
   await db.ngram_stats.clear()
   await db.session_logs.clear()
   await db.srs_queue.clear()
+  await db.pair_history.clear()
 })
 
 describe('session orchestration', () => {
@@ -117,5 +125,54 @@ describe('session orchestration', () => {
     await processBatch([key('a', 'up', 6000, true), key('b', 'down', 6010, true)])
     const advanced = await db.srs_queue.get(['a->b', 'PROSE'])
     expect(advanced?.review_stage).toBe(1)
+  })
+
+  it('getHeatmapData aggregates avg latency into each destination key, weighted by occurrences', async () => {
+    await startSession('PROSE')
+    // a->b transits at 100ms, twice; c->b transits at 300ms, once -> "b" average
+    // should be the occurrence-weighted mean, not a flat average of the two pairs
+    await processBatch([key('a', 'up', 0, true), key('b', 'down', 100, true)])
+    await processBatch([key('a', 'up', 1000, true), key('b', 'down', 1100, true)])
+    await processBatch([key('c', 'up', 2000, true), key('b', 'down', 2300, true)])
+
+    const heatmap = await getHeatmapData()
+    const bEntry = heatmap.find((entry) => entry.key === 'b')
+
+    expect(bEntry?.occurrences).toBe(3)
+    // (100*2 + 300*1) / 3 = 166.67, via the EWMA-updated per-pair averages
+    expect(bEntry?.avgLatencyMs).toBeGreaterThan(100)
+    expect(bEntry?.avgLatencyMs).toBeLessThan(300)
+  })
+
+  it('getHistoryView returns recent sessions and trend data for the most-flagged pairs', async () => {
+    await startSession('PROSE')
+    await processBatch([key('a', 'up', 0, true), key('b', 'down', 200, true)])
+    await endSession({
+      session_id: 'session-1',
+      domain_type: 'PROSE',
+      wpm_raw: 30,
+      wpm_net: 28,
+      accuracy: 95,
+      burst_consistency: 0.8,
+      timestamp: 1000,
+    })
+
+    await startSession('PROSE')
+    await processBatch([key('a', 'up', 0, true), key('b', 'down', 150, true)])
+    await endSession({
+      session_id: 'session-2',
+      domain_type: 'PROSE',
+      wpm_raw: 35,
+      wpm_net: 33,
+      accuracy: 96,
+      burst_consistency: 0.85,
+      timestamp: 2000,
+    })
+
+    const view = await getHistoryView('PROSE', 10)
+
+    expect(view.sessions.map((s) => s.session_id)).toEqual(['session-2', 'session-1']) // most recent first
+    expect(view.flaggedPairs[0].pairId).toBe('a->b')
+    expect(view.flaggedPairs[0].trend).toEqual([200, 150]) // chronological order
   })
 })

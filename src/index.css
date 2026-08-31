@@ -6,7 +6,8 @@
 
 /*
   Design tokens — Kinetic Type UI/UX Brief §03 (Color System) & §04 (Typography System).
-  Dark is the only theme implemented in Phase 0; Focus Mode (light) is scoped to Phase 3.
+  Dark is the only theme implemented so far; Focus Mode (light) remains deferred — not
+  named as one of Phase 3's five workstreams (Implementation Plan §05), revisit later.
 */
 :root {
   --kt-ink: #0b0f19;
@@ -50,6 +51,38 @@ body {
 :focus-visible {
   outline: 2px solid var(--kt-signal-teal);
   outline-offset: 2px;
+}
+
+/* Session-end transition — UI/UX Brief §09: "results panel rises from bottom
+   12px + fade, 220ms cubic-bezier(.2,.8,.2,1)". Reduced-motion strips the
+   translate/opacity keyframe down to nothing via the media query below. */
+@keyframes kt-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.kt-panel-enter {
+  animation: kt-panel-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Heatmap "hot" pulse — UI/UX Brief §09: subtle 4% scale breathing loop while
+   a key remains in the active weak-pair pool. */
+@keyframes kt-hot-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.04);
+  }
+}
+.kt-hot-pulse {
+  animation: kt-hot-pulse 1.8s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -9,12 +9,14 @@ Implementation Plan this build follows phase by phase.
 
 ## Status
 
-**Phase 2 — Adaptive Engine & Domains** (Implementation Plan §04) — the core "kinetic" mechanic is
-live. All three domain modes exist (Dev, CLI, Prose), and practice text is generated live by the
-Dynamic Material Synthesizer: it weights your key-pairs by `W(P) = L(P) × (1 + α·E(P))`, weaves
-words containing your slowest/most error-prone pairs into ~70% of the stream, and reinserts
-recently-mastered pairs at low density via a spaced-repetition queue to confirm retention. No
-heatmap or account sync yet (Phase 3/4).
+**Phase 3 — Visual Analytics & Polish** (Implementation Plan §05). The Results screen now shows a
+keyboard-shaped latency heatmap (colorblind-safe teal→amber, weighted by real transition data),
+a fatigue/micro-pause timeline, a per-pair trend sparkline, and a History & Trends screen charting
+WPM/accuracy and your most-flagged transitions across recent sessions. The typing stage got a real
+motion pass — keystroke crossfade + shake on misses, a sliding caret, chunk fade-in — all of it
+stripped to instant color-only changes under `prefers-reduced-motion`. No account sync yet
+(Phase 4); Focus Mode (light theme) remains deliberately deferred — not one of Phase 3's five
+named workstreams.
 
 ## Stack
 
@@ -42,9 +44,11 @@ npm run dev
 Opens at `http://localhost:5173`. Pick a domain card and type — text streams in and is generated
 live by the adaptive engine, each keystroke is timestamped and color-coded (teal = correct, amber
 = miss, blue block = cursor), live WPM/accuracy/elapsed/targeted-pair update above the stage, and
-pressing **Esc** (or finishing the passage) ends the session and shows your slowest key-pair
-transitions. Play a few sessions in the same domain and watch the "Targeted pair" stat start
-reflecting your actual weak spots — that's the adaptive loop working.
+pressing **Esc** (or finishing the passage) ends the session and drops you on Results: a latency
+heatmap, a fatigue timeline, a trend sparkline for your slowest pair, and buttons to type again,
+view history, or switch domain. Play a few sessions in the same domain and watch the "Targeted
+pair" stat and the heatmap start reflecting your actual weak spots — that's the adaptive loop
+working.
 
 ## Scripts
 
@@ -64,20 +68,21 @@ reflecting your actual weak spots — that's the adaptive loop working.
 
 ```
 src/
-  app/       Root shell (App.tsx) — idle(domain select) / active / complete states
+  app/       Root shell (App.tsx) — idle(domain select) / active / complete / history states
   domains/   Domain lexers — dev.ts, cli.ts, prose.ts, each a flat word list
-  data/      Dexie schema (ngram_stats, session_logs, srs_queue) — used inside the worker
-  engine/    Worker, session orchestration, n-gram matrix, weighting (W(P)),
-             synthesizer (adaptive text generation), spaced-repetition queue, metrics
-  render/    Canvas typing stage, domain select, results panel, small UI motifs
+  data/      Dexie schema (ngram_stats, session_logs, srs_queue, pair_history) — inside the worker
+  engine/    Worker, session orchestration, n-gram matrix, weighting (W(P)), synthesizer,
+             spaced-repetition queue, metrics, fatigue/micro-pause detection
+  render/    Canvas typing stage (with the motion pass), domain select, results panel,
+             keyboard heatmap, sparkline, fatigue timeline, history view, small UI motifs
   lib/       Firebase client init (not called from app code yet — Phase 4)
   test/      Vitest setup
 e2e/         Playwright end-to-end specs
 docs/        The six source documents this build follows
 ```
 
-Phase 3 adds the keyboard-shaped latency heatmap, micro-pause/fatigue detection, history &
-trend charts, and the full motion/accessibility pass.
+Phase 4 adds Firebase Auth (anonymous → upgraded), the Firestore sync engine, and account
+backup/restore across devices.
 
 ## Firebase
 

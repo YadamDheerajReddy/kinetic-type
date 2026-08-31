@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable, type Table } from 'dexie'
-import type { Domain, PairStat, SessionSummary, SrsEntry } from '../engine/types'
+import type { Domain, PairHistoryEntry, PairStat, SessionSummary, SrsEntry } from '../engine/types'
 
 /**
  * Local-first persistence — Backend Schema §02. IndexedDB is the permanent source
@@ -20,6 +20,7 @@ export class KineticTypeDB extends Dexie {
   ngram_stats!: Table<PairStat, [string, Domain]>
   session_logs!: EntityTable<SessionSummary, 'session_id'>
   srs_queue!: Table<SrsEntry, [string, Domain]>
+  pair_history!: EntityTable<PairHistoryEntry, 'id'>
 
   constructor() {
     super('KineticTypeDB')
@@ -32,6 +33,11 @@ export class KineticTypeDB extends Dexie {
     // session_logs carry over unchanged from version 1.
     this.version(2).stores({
       srs_queue: '[pair_id+domain], domain, next_review_at',
+    })
+    // Phase 3: per-pair latency history for trend sparklines (not in Backend
+    // Schema — see PairHistoryEntry in engine/types.ts for why).
+    this.version(3).stores({
+      pair_history: '++id, [pair_id+domain], timestamp',
     })
   }
 }

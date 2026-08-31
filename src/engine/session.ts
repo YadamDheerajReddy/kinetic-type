@@ -3,7 +3,7 @@ import { db } from '../data/db'
 import { computeTopPairs, initialMatrixState, processKeyEventBatch } from './ngramMatrix'
 import { reconcileSrsEntry, selectDuePairs } from './srs'
 import { synthesizeText } from './synthesizer'
-import type { Domain, KeyEvent, PairStat, SessionSummary, SrsEntry } from './types'
+import type { Domain, HeatmapEntry, KeyEvent, PairStat, SessionSummary, SrsEntry } from './types'
 
 /**
  * Session orchestration — runs inside the Adaptive Engine worker (worker.ts just
@@ -115,6 +115,87 @@ export async function endSession(
   partial: Omit<SessionSummary, 'top_pairs'>,
 ): Promise<SessionSummary> {
   const summary: SessionSummary = { ...partial, top_pairs: computeTopPairs(sessionLatencies, 5) }
-  await db.session_logs.put(summary)
+
+  const historyEntries = summary.top_pairs.map((pair) => ({
+    pair_id: pair.pair,
+    domain: summary.domain_type,
+    avg_latency_ms: pair.ms,
+    timestamp: summary.timestamp,
+  }))
+
+  await Promise.all([
+    db.session_logs.put(summary),
+    historyEntries.length > 0 ? db.pair_history.bulkAdd(historyEntries) : Promise.resolve(),
+  ])
+
   return summary
+}
+
+/**
+ * Latency heatmap (UI/UX Brief §08) — average transition time into each
+ * destination key, weighted by each contributing pair's occurrence count.
+ * Uses the in-memory cache from the session that just ended, not a fresh
+ * query, so it's ready the instant endSession resolves.
+ */
+export async function getHeatmapData(): Promise<HeatmapEntry[]> {
+  const byKey = new Map<string, { weightedSum: number; occurrences: number }>()
+
+  for (const stat of statsCache.values()) {
+    const destKey = stat.pair_id.split('->')[1]
+    if (!destKey) continue
+    const entry = byKey.get(destKey) ?? { weightedSum: 0, occurrences: 0 }
+    entry.weightedSum += stat.avg_latency_ms * stat.total_occurrences
+    entry.occurrences += stat.total_occurrences
+    byKey.set(destKey, entry)
+  }
+
+  return [...byKey.entries()].map(([key, { weightedSum, occurrences }]) => ({
+    key,
+    avgLatencyMs: occurrences > 0 ? weightedSum / occurrences : 0,
+    occurrences,
+  }))
+}
+
+export interface HistoryView {
+  sessions: SessionSummary[]
+  flaggedPairs: Array<{ pairId: string; trend: number[] }>
+}
+
+/**
+ * History & Trends (App Flow §05): recent session WPM/accuracy history for
+ * this domain, plus the most-frequently-flagged pairs' own latency trend —
+ * "the primary evidence of the product working."
+ */
+export async function getHistoryView(domain: Domain, sessionLimit = 10): Promise<HistoryView> {
+  const sessions = await db.session_logs
+    .where('[domain_type+timestamp]')
+    .between([domain, 0], [domain, Infinity])
+    .reverse()
+    .limit(sessionLimit)
+    .toArray()
+
+  const frequency = new Map<string, number>()
+  for (const session of sessions) {
+    for (const pair of session.top_pairs) {
+      frequency.set(pair.pair, (frequency.get(pair.pair) ?? 0) + 1)
+    }
+  }
+  const topFlagged = [...frequency.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([pairId]) => pairId)
+
+  const flaggedPairs = await Promise.all(
+    topFlagged.map(async (pairId) => {
+      const rows = await db.pair_history
+        .where('[pair_id+domain]')
+        .equals([pairId, domain])
+        .reverse()
+        .limit(sessionLimit)
+        .toArray()
+      return { pairId, trend: rows.reverse().map((row) => row.avg_latency_ms) }
+    }),
+  )
+
+  return { sessions, flaggedPairs }
 }

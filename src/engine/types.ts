@@ -57,3 +57,23 @@ export interface SrsEntry {
   next_review_at: number
   review_stage: number // 0-5, Backend Schema §02
 }
+
+// Not in Backend Schema (written pre-Phase 3) — a small append-only log so History &
+// Trends (App Flow §05) and the Results screen's per-pair sparkline (UI/UX Brief §08)
+// have real time-series data instead of only the single latest EWMA value. One row is
+// written per top_pair whenever a session ends.
+export interface PairHistoryEntry {
+  id?: number // Dexie auto-increment
+  pair_id: string
+  domain: Domain
+  avg_latency_ms: number
+  timestamp: number
+}
+
+// Latency heatmap (UI/UX Brief §08) — average transition time *into* a given
+// destination key, aggregated across every pair that ends at it.
+export interface HeatmapEntry {
+  key: string // single destination character, lowercase
+  avgLatencyMs: number
+  occurrences: number
+}

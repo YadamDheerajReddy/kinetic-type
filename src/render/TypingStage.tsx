@@ -1,6 +1,7 @@
 import * as Comlink from 'comlink'
 import { useEffect, useRef, useState } from 'react'
 import { ALL_DOMAINS, DOMAIN_LEXERS } from '../domains'
+import { detectMicroPauses, type MicroPause } from '../engine/fatigue'
 import {
   computeAccuracy,
   computeBurstConsistency,
@@ -26,17 +27,39 @@ const LINE_HEIGHT = 24
 const VISIBLE_LINES = 4
 const PADDING = 16
 
-const COLOR_INK = '#0B0F19'
-const COLOR_PANEL = '#141824'
-const COLOR_FAINT = '#8A91A6'
-const COLOR_TEAL = '#4FD1C5'
-const COLOR_AMBER = '#FF8A5C'
-const COLOR_BLUE = '#6D8BFF'
+// UI/UX Brief §09 Motion & Micro-interactions timings.
+const CORRECT_FLASH_MS = 120
+const INCORRECT_FLASH_MS = 160
+const CARET_SLIDE_MS = 80
+const CHUNK_FADE_MS = 200
+const UPCOMING_OPACITY = 0.6
+
+const INK_RGB: [number, number, number] = [11, 15, 25]
+const PANEL_RGB: [number, number, number] = [20, 24, 36]
+const FAINT_RGB: [number, number, number] = [138, 145, 166]
+const TEAL_RGB: [number, number, number] = [79, 209, 197]
+const AMBER_RGB: [number, number, number] = [255, 138, 92]
+const BLUE_RGB: [number, number, number] = [109, 139, 255]
+
+function lerpColor(
+  from: [number, number, number],
+  to: [number, number, number],
+  t: number,
+): string {
+  const r = Math.round(from[0] + (to[0] - from[0]) * t)
+  const g = Math.round(from[1] + (to[1] - from[1]) * t)
+  const b = Math.round(from[2] + (to[2] - from[2]) * t)
+  return `rgb(${r}, ${g}, ${b})`
+}
 
 interface TypingStageProps {
   api: React.RefObject<Comlink.Remote<AdaptiveEngineApi> | null>
   domain: Domain
-  onComplete: (summary: SessionSummary) => void
+  onComplete: (
+    summary: SessionSummary,
+    microPauses: MicroPause[],
+    sessionDurationMs: number,
+  ) => void
 }
 
 export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
@@ -46,6 +69,10 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
   const linesRef = useRef<WrappedLine[]>([])
   const positionRef = useRef(0)
   const correctFlagsRef = useRef<boolean[]>([])
+  const flashTimestampsRef = useRef<number[]>([]) // when each typed index was typed, for the crossfade/shake
+  const chunkFadeRef = useRef<{ fromIndex: number; at: number } | null>(null)
+  const caretMoveRef = useRef<{ fromPosition: number; at: number }>({ fromPosition: 0, at: 0 })
+  const reducedMotionRef = useRef(false)
   const typedCountRef = useRef(0)
   const correctCountRef = useRef(0)
   const keystrokeTimestampsRef = useRef<number[]>([])
@@ -60,6 +87,16 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
 
   const [liveStats, setLiveStats] = useState({ wpmNet: 0, accuracy: 100, elapsedSec: 0 })
   const [targetedPair, setTargetedPair] = useState<string | null>(null)
+
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    reducedMotionRef.current = mq.matches
+    const handler = () => {
+      reducedMotionRef.current = mq.matches
+    }
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
 
   function elapsedMsAt(now: number): number {
     if (sessionStartRef.current === null) return 0
@@ -82,12 +119,14 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
     if (remaining >= BUFFER_LOW_THRESHOLD || remainingToCap <= 0) return
 
     fetchingChunkRef.current = true
+    const previousLength = targetTextRef.current.length
     const result = await api.current?.getNextChunk(Math.min(CHUNK_FETCH_CHARS, remainingToCap + 40))
     if (result && !endedRef.current) {
       targetTextRef.current = targetTextRef.current
         ? `${targetTextRef.current} ${result.text}`
         : result.text
       linesRef.current = [] // force the canvas paint loop to re-wrap on next frame
+      chunkFadeRef.current = { fromIndex: previousLength, at: performance.now() }
       setTargetedPair(result.targetedPair)
     }
     fetchingChunkRef.current = false
@@ -101,6 +140,7 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
     const now = performance.now()
     const elapsed = elapsedMsAt(now)
     const errors = typedCountRef.current - correctCountRef.current
+    const microPauses = detectMicroPauses(keystrokeTimestampsRef.current)
 
     const summary = await api.current?.endSession({
       session_id: crypto.randomUUID(),
@@ -115,7 +155,7 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
       timestamp: Date.now(),
     })
 
-    if (summary) onComplete(summary)
+    if (summary) onComplete(summary, microPauses, elapsed)
   }
 
   // Session setup: start the worker session, fetch the first chunk, wire up
@@ -127,6 +167,9 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
     linesRef.current = []
     positionRef.current = 0
     correctFlagsRef.current = []
+    flashTimestampsRef.current = []
+    chunkFadeRef.current = null
+    caretMoveRef.current = { fromPosition: 0, at: performance.now() }
     typedCountRef.current = 0
     correctCountRef.current = 0
     keystrokeTimestampsRef.current = []
@@ -159,7 +202,9 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
       const t = performance.now()
       if (sessionStartRef.current === null) sessionStartRef.current = t
 
+      caretMoveRef.current = { fromPosition: positionRef.current, at: t }
       correctFlagsRef.current.push(correct)
+      flashTimestampsRef.current.push(t)
       typedCountRef.current += 1
       if (correct) correctCountRef.current += 1
       positionRef.current += 1
@@ -246,9 +291,11 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
           linesRef.current = wrapText(targetTextRef.current, charsPerLine)
         }
 
-        ctx.fillStyle = COLOR_PANEL
+        ctx.fillStyle = `rgb(${PANEL_RGB.join(',')})`
         ctx.fillRect(0, 0, width, height)
 
+        const now = performance.now()
+        const reducedMotion = reducedMotionRef.current
         const charWidth = ctx.measureText('0').width
         const lines = linesRef.current
         const position = positionRef.current
@@ -258,6 +305,14 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
           firstVisible = Math.max(0, lines.length - VISIBLE_LINES)
         }
 
+        function cellPosition(index: number): { x: number; y: number; row: number } | null {
+          const lineIdx = lineIndexForPosition(lines, index)
+          const row = lineIdx - firstVisible
+          if (row < 0 || row >= VISIBLE_LINES || !lines[lineIdx]) return null
+          const col = index - lines[lineIdx].start
+          return { x: PADDING + col * charWidth, y: PADDING + row * LINE_HEIGHT, row }
+        }
+
         for (let row = 0; row < VISIBLE_LINES; row++) {
           const line = lines[firstVisible + row]
           if (!line) continue
@@ -265,21 +320,56 @@ export function TypingStage({ api, domain, onComplete }: TypingStageProps) {
 
           for (let col = 0; col < line.text.length; col++) {
             const absoluteIndex = line.start + col
+            if (absoluteIndex === position) continue // drawn separately, with the caret, below
             const char = line.text[col]
             const x = PADDING + col * charWidth
 
-            if (absoluteIndex === position) {
-              ctx.fillStyle = COLOR_BLUE
-              ctx.fillRect(x, y, charWidth, LINE_HEIGHT - 4)
-              ctx.fillStyle = COLOR_INK
-              ctx.fillText(char, x, y + 2)
-            } else if (absoluteIndex < position) {
-              ctx.fillStyle = correctFlagsRef.current[absoluteIndex] ? COLOR_TEAL : COLOR_AMBER
-              ctx.fillText(char, x, y + 2)
+            if (absoluteIndex < position) {
+              const correct = correctFlagsRef.current[absoluteIndex]
+              const flashAt = flashTimestampsRef.current[absoluteIndex] ?? 0
+              const duration = correct ? CORRECT_FLASH_MS : INCORRECT_FLASH_MS
+              const progress = reducedMotion ? 1 : Math.min(1, (now - flashAt) / duration)
+              ctx.globalAlpha = 1
+              ctx.fillStyle = lerpColor(FAINT_RGB, correct ? TEAL_RGB : AMBER_RGB, progress)
+              let drawX = x
+              if (!correct && progress < 1) {
+                drawX += Math.sin(progress * Math.PI * 4) * (1 - progress) * 1.5
+              }
+              ctx.fillText(char, drawX, y + 2)
             } else {
-              ctx.fillStyle = COLOR_FAINT
+              let alpha = UPCOMING_OPACITY
+              const fade = chunkFadeRef.current
+              if (!reducedMotion && fade && absoluteIndex >= fade.fromIndex) {
+                const fadeProgress = Math.min(1, (now - fade.at) / CHUNK_FADE_MS)
+                alpha = UPCOMING_OPACITY * fadeProgress
+              }
+              ctx.globalAlpha = alpha
+              ctx.fillStyle = `rgb(${FAINT_RGB.join(',')})`
               ctx.fillText(char, x, y + 2)
+              ctx.globalAlpha = 1
             }
+          }
+        }
+
+        const toCell = cellPosition(position)
+        if (toCell) {
+          let drawX = toCell.x
+          const caretProgress = reducedMotion
+            ? 1
+            : Math.min(1, (now - caretMoveRef.current.at) / CARET_SLIDE_MS)
+          if (caretProgress < 1) {
+            const fromCell = cellPosition(caretMoveRef.current.fromPosition)
+            if (fromCell && fromCell.row === toCell.row) {
+              drawX = fromCell.x + (toCell.x - fromCell.x) * caretProgress
+            }
+          }
+          ctx.globalAlpha = 1
+          ctx.fillStyle = `rgb(${BLUE_RGB.join(',')})`
+          ctx.fillRect(drawX, toCell.y, charWidth, LINE_HEIGHT - 4)
+          const charAtPosition = targetTextRef.current[position]
+          if (charAtPosition) {
+            ctx.fillStyle = `rgb(${INK_RGB.join(',')})`
+            ctx.fillText(charAtPosition, toCell.x, toCell.y + 2)
           }
         }
       }

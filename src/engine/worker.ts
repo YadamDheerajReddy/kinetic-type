@@ -1,8 +1,16 @@
 import * as Comlink from 'comlink'
-import { endSession, getNextChunk, processBatch, resetPairing, startSession } from './session'
-import type { NextChunk } from './session'
-import type { Domain, KeyEvent, SessionSummary } from './types'
-export type { NextChunk } from './session'
+import {
+  endSession,
+  getHeatmapData,
+  getHistoryView,
+  getNextChunk,
+  processBatch,
+  resetPairing,
+  startSession,
+} from './session'
+import type { HistoryView, NextChunk } from './session'
+import type { Domain, HeatmapEntry, KeyEvent, SessionSummary } from './types'
+export type { HistoryView, NextChunk } from './session'
 
 export interface AdaptiveEngineApi {
   startSession(domain: Domain): Promise<void>
@@ -10,6 +18,8 @@ export interface AdaptiveEngineApi {
   resetPairing(): Promise<void>
   getNextChunk(minChars: number): Promise<NextChunk>
   endSession(partial: Omit<SessionSummary, 'top_pairs'>): Promise<SessionSummary>
+  getHeatmapData(): Promise<HeatmapEntry[]>
+  getHistoryView(domain: Domain, sessionLimit?: number): Promise<HistoryView>
 }
 
 const api: AdaptiveEngineApi = {
@@ -18,6 +28,8 @@ const api: AdaptiveEngineApi = {
   resetPairing: async () => resetPairing(),
   getNextChunk,
   endSession,
+  getHeatmapData,
+  getHistoryView,
 }
 
 Comlink.expose(api)

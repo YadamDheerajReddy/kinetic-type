@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { useAdaptiveEngine } from '../engine/useAdaptiveEngine'
+import type { MicroPause } from '../engine/fatigue'
 import type { Domain, SessionSummary } from '../engine/types'
 import { DomainSelect } from '../render/DomainSelect'
+import { HistoryView } from '../render/HistoryView'
 import { ResultsPanel } from '../render/ResultsPanel'
 import { TypingStage } from '../render/TypingStage'
 
-type Status = 'idle' | 'active' | 'complete'
+type Status = 'idle' | 'active' | 'complete' | 'history'
 
 // App Flow §02: "Domain selection persists locally as the default for next visit."
 const LAST_DOMAIN_KEY = 'kinetic-type:last-domain'
@@ -28,6 +30,8 @@ export function App() {
   const [lastDomain, setLastDomain] = useState<Domain | null>(loadLastDomain)
   const [domain, setDomain] = useState<Domain>(() => loadLastDomain() ?? 'PROSE')
   const [summary, setSummary] = useState<SessionSummary | null>(null)
+  const [microPauses, setMicroPauses] = useState<MicroPause[]>([])
+  const [sessionDurationMs, setSessionDurationMs] = useState(0)
 
   function handleSelectDomain(selected: Domain) {
     setDomain(selected)
@@ -41,15 +45,16 @@ export function App() {
     <div className="mx-auto flex min-h-svh max-w-3xl flex-col gap-8 px-6 py-16">
       <header className="flex flex-col gap-2">
         <span className="kt-mono text-eyebrow uppercase tracking-[0.12em] text-engine-violet">
-          Phase 2 — Adaptive Engine & Domains
+          Phase 3 — Visual Analytics & Polish
         </span>
         <h1 className="font-display text-display text-cream">
           Kinetic <span className="text-signal-teal">Type</span>
         </h1>
         <p className="text-body text-faint">
-          A dark instrument panel that turns your own hands into the interface. The engine now
-          learns your slowest transitions and weaves them back into what you type next — the full
-          analytics view and cloud sync arrive in later phases.
+          A dark instrument panel that turns your own hands into the interface. The engine learns
+          your slowest transitions and weaves them back into what you type next — now with a
+          heatmap, fatigue detection, and trend history to show it working. Cloud sync arrives in
+          Phase 4.
         </p>
       </header>
 
@@ -64,8 +69,10 @@ export function App() {
         <TypingStage
           api={api}
           domain={domain}
-          onComplete={(result) => {
+          onComplete={(result, pauses, durationMs) => {
             setSummary(result)
+            setMicroPauses(pauses)
+            setSessionDurationMs(durationMs)
             setStatus('complete')
           }}
         />
@@ -74,9 +81,17 @@ export function App() {
       {status === 'complete' && summary && (
         <ResultsPanel
           summary={summary}
+          api={api}
+          microPauses={microPauses}
+          sessionDurationMs={sessionDurationMs}
           onTypeAgain={() => setStatus('active')}
           onSwitchDomain={() => setStatus('idle')}
+          onViewHistory={() => setStatus('history')}
         />
+      )}
+
+      {status === 'history' && (
+        <HistoryView api={api} domain={domain} onBack={() => setStatus('complete')} />
       )}
     </div>
   )
