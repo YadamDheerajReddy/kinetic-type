@@ -28,14 +28,16 @@ export function FingerLoadChart({ loads }: { loads: FingerLoad[] }) {
           const widthPct = 20 + t * 80 // keep even the fastest finger's bar visible
           return (
             <div key={load.finger} className="flex items-center gap-2">
-              <span className="kt-mono w-24 shrink-0 text-body text-faint">{load.finger}</span>
+              <span className="kt-mono w-28 shrink-0 whitespace-nowrap text-body text-faint">
+                {load.finger}
+              </span>
               <div className="h-3 flex-1 overflow-hidden rounded-full bg-hairline">
                 <div
                   className="h-full rounded-full"
                   style={{ width: `${widthPct}%`, backgroundColor: rampColor(t) }}
                 />
               </div>
-              <span className="kt-mono w-14 shrink-0 text-right text-body text-faint">
+              <span className="kt-mono w-16 shrink-0 whitespace-nowrap text-right text-body text-faint">
                 {load.avgLatencyMs.toFixed(0)}ms
               </span>
             </div>
