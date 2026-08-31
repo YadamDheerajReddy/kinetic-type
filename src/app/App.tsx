@@ -14,20 +14,24 @@ function isDomain(value: string | null): value is Domain {
   return value === 'CODE_TS' || value === 'CLI_BASH' || value === 'PROSE'
 }
 
-function loadLastDomain(): Domain {
-  if (typeof window === 'undefined') return 'PROSE'
+// null means "never used the app before" — distinct from any real Domain value,
+// so the idle screen knows whether there's anything to offer resuming.
+function loadLastDomain(): Domain | null {
+  if (typeof window === 'undefined') return null
   const stored = window.localStorage.getItem(LAST_DOMAIN_KEY)
-  return isDomain(stored) ? stored : 'PROSE'
+  return isDomain(stored) ? stored : null
 }
 
 export function App() {
   const { api, ready } = useAdaptiveEngine()
   const [status, setStatus] = useState<Status>('idle')
-  const [domain, setDomain] = useState<Domain>(loadLastDomain)
+  const [lastDomain, setLastDomain] = useState<Domain | null>(loadLastDomain)
+  const [domain, setDomain] = useState<Domain>(() => loadLastDomain() ?? 'PROSE')
   const [summary, setSummary] = useState<SessionSummary | null>(null)
 
   function handleSelectDomain(selected: Domain) {
     setDomain(selected)
+    setLastDomain(selected)
     window.localStorage.setItem(LAST_DOMAIN_KEY, selected)
     setSummary(null)
     setStatus('active')
@@ -51,7 +55,7 @@ export function App() {
 
       {status === 'idle' &&
         (ready ? (
-          <DomainSelect onSelect={handleSelectDomain} />
+          <DomainSelect lastDomain={lastDomain} onSelect={handleSelectDomain} />
         ) : (
           <p className="kt-mono text-body text-faint">Connecting…</p>
         ))}

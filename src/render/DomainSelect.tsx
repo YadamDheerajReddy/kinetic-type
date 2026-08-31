@@ -1,14 +1,42 @@
-import { ALL_DOMAINS } from '../domains'
+import { ALL_DOMAINS, DOMAIN_LEXERS } from '../domains'
 import type { Domain } from '../engine/types'
 
 /**
  * Onboarding & Domain Select — UI/UX Brief §06. Picking a card is the action
  * itself (App Flow §02 Step 2), not a separate confirm step: "User taps Dev,
  * CLI, or Prose" starts the session directly.
+ *
+ * When a domain was used before, App Flow §02 also calls for it to persist
+ * "as the default for next visit" — surfaced here as a one-tap "Continue"
+ * quick action above the full picker, which stays available either way.
  */
-export function DomainSelect({ onSelect }: { onSelect: (domain: Domain) => void }) {
+export function DomainSelect({
+  lastDomain,
+  onSelect,
+}: {
+  lastDomain: Domain | null
+  onSelect: (domain: Domain) => void
+}) {
+  const lastLexer = lastDomain ? DOMAIN_LEXERS[lastDomain] : null
+
   return (
     <section className="flex flex-col gap-4 rounded border border-hairline bg-panel p-6">
+      {lastLexer && (
+        <button
+          type="button"
+          onClick={() => onSelect(lastLexer.id)}
+          className="flex items-center justify-between rounded border border-signal-teal bg-ink px-4 py-3 text-left transition-colors duration-160 ease-kt-in-out hover:bg-panel"
+        >
+          <span className="flex items-center gap-2">
+            <span className="kt-mono text-h2 text-signal-teal">{lastLexer.glyph}</span>
+            <span className="font-display text-h2 text-cream">
+              Continue in {lastLexer.label} Mode
+            </span>
+          </span>
+          <span className="kt-mono text-body text-faint">→</span>
+        </button>
+      )}
+
       <div className="flex flex-col gap-1">
         <span className="kt-mono text-eyebrow uppercase tracking-[0.12em] text-signal-teal">
           ◆ Choose your domain
